@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yield on-chain · Solana — Nexora</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/css/dashboard.css">
+<style>
+  :root{
+    --bg:#0b0f14; --card:#121820; --line:#1e2733;
+    --txt:#e6edf3; --dim:#8b98a5; --pri:#14f195; --sec:#9945ff; --warn:#f7931a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:28px 18px 80px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:18px;margin:34px 0 12px}
+  .sub{color:var(--dim);margin:0 0 22px;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+  .btn{background:var(--pri);color:#04231a;border:0;border-radius:10px;padding:11px 18px;
+    font-weight:600;cursor:pointer;font-size:14px}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--line)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;word-break:break-all}
+  .addr{color:var(--dim);font-size:13px;margin-top:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+  .stat{background:#0e141b;border:1px solid var(--line);border-radius:12px;padding:14px}
+  .stat .k{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .stat .v{font-size:21px;font-weight:600;margin-top:5px}
+  .nullv{color:var(--dim);font-size:15px;font-weight:400}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-size:12px;font-weight:600;text-transform:uppercase}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;border:1px solid var(--line);color:var(--dim)}
+  .warn{border-left:3px solid var(--warn);background:#1a1408;padding:12px 14px;border-radius:8px;margin:14px 0;font-size:14px}
+  .ok{color:var(--pri)} .bad{color:#ff6b6b}
+  a{color:var(--pri)}
+  .note{font-size:13px;color:var(--dim);margin-top:10px}
+  .tabs{display:flex;gap:8px;margin:18px 0 0}
+  .tabs a{padding:8px 14px;border:1px solid var(--line);border-radius:9px;text-decoration:none;color:var(--txt);font-size:14px}
+  .tabs a.on{background:var(--pri);color:#04231a;border-color:var(--pri);font-weight:600}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="row" style="justify-content:space-between">
+    <div>
+      <h1>Yield on-chain</h1>
+      <p class="sub">SOL e USDT em protocolos de staking/lending na Solana. Dados lidos da rede.</p>
+    </div>
+    <div class="row">
+      <button class="btn" id="connect">Conectar Phantom</button>
+      <button class="btn ghost" id="refresh">Atualizar</button>
+    </div>
+  </div>
+
+  <div id="wallet" class="card" hidden>
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div style="font-size:12px;color:var(--dim);text-transform:uppercase">Carteira conectada</div>
+        <div class="mono" id="waddr"></div>
+      </div>
+      <button class="btn ghost" id="disconnect">Desconectar</button>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2>Suas posições</h2>
+  <p class="sub" id="posHint">Conecte a carteira para ver saldos. Leitura apenas — nada é movimentado.</p>
+  <div class="grid" id="balances"></div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2>SOL → jitoSOL (liquid staking)</h2>
+  <p class="sub">
+    Você entrega SOL ao stake pool da Jito e recebe jitoSOL, que mantém valor sobre SOL.
+    Sem lockup e sem penalidade de saída.
+  </p>
+  <div class="card">
+    <div class="grid">
+      <div class="stat"><div class="k">Taxa de câmbio</div><div class="v" id="jRate"><span class="nullv">carregando…</span></div></div>
+      <div class="stat"><div class="k">SOL no pool</div><div class="v" id="jPool"><span class="nullv">—</span></div></div>
+      <div class="stat"><div class="k">jitoSOL em circulação</div><div class="v" id="jIssued"><span class="nullv">—</span></div></div>
+    </div>
+    <div class="note mono" id="jPoolAddr"></div>
+    <div class="note">
+      A taxa sobe com o tempo conforme o pool recebe rewards de staking e MEV.
+      A Jito publica <span id="jApyHint">—</span> como referência de APY; a taxa de câmbio acima é a fonte auditável.
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2>USDT → vaults Kamino</h2>
+  <p class="sub">
+    Depósito em vaults de lending curados por terceiros (risco manager). Você recebe ações do vault.
+  </p>
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>Vault</th><th>APY</th><th>7d</th><th>30d</th><th>365d</th><th>Titulares</th><th>Perf. fee</th></tr>
+      </thead>
+      <tbody id="vaults"><tr><td colspan="7" style="color:var(--dim)">carregando…</td></tr></tbody>
+    </table>
+    <div class="warn">
+      APY aqui é <strong>média retroativa</strong> do vault — não é taxa garantida e não é
+      promising de retorno. Perf. fee é a taxa de performance cobrada pelo gestor.
+      Vaults com poucos titulares têm histórico curto e risco de contraparte maior.
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------------------------ -->
+  <h2>O que ainda não existe aqui</h2>
+  <div class="card">
+    <ul style="margin:0;padding-left:20px;color:var(--dim);font-size:14px">
+      <li style="margin-bottom:6px"><strong>Botão de depósito/saque.</strong> Não implementado de propósito: sem
+        revisão de auditoria e sem teste em mainnet, um botão de assinatura é risco de perda de fundo.
+        Para operar: use <a href="https://jito.network" target="_blank" rel="noopener">jito.network</a>
+        ou <a href="https://kamino.com" target="_blank" rel="noopener">kamino.com</a> diretamente, ou
+        integre <code>@solana/spl-stake-pool</code> / <code>@kamino-finance/klend-sdk</code>
+        com build step e auditoria.</li>
+      <li style="margin-bottom:6px"><strong>Sem promessa de rendimento.</strong> Este painel não promete
+        retorno. Os números são leituras de rede e podem cair a qualquer momento.</li>
+      <li>Sem custódia: nenhuma chave privada toca este servidor.</li>
+    </ul>
+  </div>
+
+  <div class="tabs">
+    <a href="/">← Início</a>
+    <a href="/dashboard.html">Dashboard</a>
+    <a class="on" href="/yield.html">Yield</a>
+  </div>
+</div>
+
+<script src="/js/yield.js"></script>
+</body>
+</html>

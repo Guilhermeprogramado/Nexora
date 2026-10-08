@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora — Criar conta</title>
+<link rel="stylesheet" href="./css/style.css"/>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
+<link rel="apple-touch-icon" href="./favicon.svg"/>
+</head>
+<body>
+<header class="header"><div class="container header-inner">
+  <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora<small>Trading IA</small></span></a>
+  <div class="header-actions" style="display:flex"><a class="btn btn-ghost" href="./index.html" style="padding:9px 16px">← Voltar</a><a class="btn btn-primary" href="./login.html" style="padding:9px 16px">Login</a></div>
+</div></header>
+<main class="auth-wrap"><div class="auth-card">
+  <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora</span></a>
+  <h1>Crie sua conta</h1>
+  <p class="sub">Comece a lucrar por dia em 1 minuto.</p>
+  <div class="alert" id="alert"></div>
+  <form id="signupForm" novalidate>
+    <div class="field"><label for="username">Nome de usuário (3-20 letras, números ou _)</label><input id="username" type="text" placeholder="Ex: Willis1" autocomplete="username" required/></div>
+    <div class="field"><label for="email">E-mail</label><input id="email" type="email" placeholder="voce@email.com" autocomplete="email" required/></div>
+    <div class="field"><label for="password">Senha (mín. 6 caracteres)</label><input id="password" type="password" placeholder="••••••••" autocomplete="new-password" required/></div>
+    <div class="field"><label for="password2">Confirmar senha</label><input id="password2" type="password" placeholder="••••••••" autocomplete="new-password" required/></div>
+    <div class="field"><label for="ref">Código de indicação (opcional)</label><input id="ref" type="text" placeholder="Ex: NX123 — preenchido via ?ref="/></div>
+    <button class="btn btn-primary btn-block" type="submit">Criar conta grátis</button>
+  </form>
+  <div class="auth-links"><a href="./login.html">Já tenho conta</a><a href="./forgot.html">Esqueci a senha</a></div>
+</div></main>
+<script src="./js/auth.js"></script>
+</body>
+</html>

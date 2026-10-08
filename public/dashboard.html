@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora — Dashboard</title>
+<link rel="stylesheet" href="./css/style.css"/>
+<link rel="stylesheet" href="./css/dashboard.css"/>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
+<link rel="apple-touch-icon" href="./favicon.svg"/>
+</head>
+<body>
+<div class="page">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar" aria-label="Navegação principal">
+    <div class="brand">
+      <div class="dot">N</div>
+      <b>Nexora<small>crypto platform</small></b>
+    </div>
+
+    <div class="welcome">Welcome back,<br><b id="welcomeName">…</b> 👋</div>
+
+    <nav class="nav" id="mainNav">
+      <a href="#dashboard" data-route="dashboard" class="active">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Dashboard</a>
+      <a href="#deposit" data-route="deposit">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/><circle cx="12" cy="12" r="9"/></svg>
+        Investir em Plano</a>
+<a href="#wallet" data-route="wallet">
+         <svg viewBox="0 0 24 24"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16V7"/><path d="M18 12h.01"/></svg>
+         Depósito</a>
+      <a href="#withdraw" data-route="withdraw">
+        <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+        Sacar</a>
+      <a href="#history" data-route="history">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        Histórico Transações</a>
+      <a href="#deposits" data-route="deposits">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M16 12h5"/></svg>
+        Meus Depósitos</a>
+      <a href="#referrals" data-route="referrals">
+        <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7.5l3 8M16 7.5l-3 8M8.5 6h7"/></svg>
+        Menu Referral</a>
+      <a href="#security" data-route="security">
+        <svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        Segurança</a>
+      <a href="#settings" data-route="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"/></svg>
+        Config Conta</a>
+      <a href="#" id="logoutLink">
+        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        Sair</a>
+    </nav>
+
+    <div class="cta">
+      <p>Adicione saldo à sua conta</p>
+      <a class="btn btn-primary" href="#wallet" style="width:100%">Depositar</a>
+    </div>
+    <a class="home-link" href="./index.html">← Sair Homepage</a>
+  </aside>
+  <div class="backdrop" id="backdrop"></div>
+
+  <!-- MAIN -->
+  <main class="main">
+    <button class="hamburger" id="hamburger" aria-label="Abrir menu" type="button"><span></span><span></span><span></span></button>
+
+    <div class="topbar">
+      <h1 id="pageTitle">Dashboard</h1>
+      <div class="topbar-right">
+        <span class="user-chip" id="userChip"></span>
+        <span class="badge">● Nexora live</span>
+      </div>
+    </div>
+
+    <!-- TICKER -->
+    <div class="ticker" aria-label="Preços cripto"><div class="ticker-track" id="tickerTrack"></div></div>
+
+    <!-- Aviso de modo simulação. some sozinho se o servidor responder
+         simulated=false, mas nunca some antes do fetch responder. -->
+    <div id="simNotice" style="display:none;border:1px solid #f59e0b;background:rgba(245,158,11,.10);border-radius:10px;padding:12px 14px;margin-bottom:18px">
+      <strong style="color:#f59e0b">&#9888; MODO SIMULA&#199;&#195;O</strong>
+      <p style="margin:6px 0 0;font-size:13.5px">
+        Este ambiente <strong>n&#227;o opera dinheiro real</strong>. Os planos t&#227;m taxas de configura&#231;&#227;o
+        (n&#227;o rentabilidade de mercado) e o cr&#233;dito di&#225;rio acontece s&#243; no banco local.
+        Para rendimento real: <a href="./yield.html" style="color:var(--green,#10b981)">/yield.html</a>.
+      </p>
+    </div>
+
+    <!-- ============ VIEW: DASHBOARD ============ -->
+    <section class="view active" id="view-dashboard">
+      <div id="simStats" style="display:none;border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:8px 10px;margin-bottom:14px;font-size:12.5px;color:#fbbf24">
+        Total Earnings abaixo = acumulado de cr&#233;ditos <strong>simulados</strong> (taxa configurada, sem lastro).
+      </div>
+      <!-- ============ RENDIMENTO AO VIVO (contador por plano) ============ -->
+      <div class="mine" id="minePanel" style="display:none">
+        <div class="mine-top">
+          <div class="mine-head">
+            <span class="mine-beacon"></span>
+            <div>
+              <b>Rendimento ao vivo</b>
+              <small id="mineSub">Sincronizando…</small>
+            </div>
+          </div>
+          <div class="mine-total">
+            <span>Total · capital + rendimento</span>
+            <b id="mineTotal">$0.000000</b>
+            <small id="mineSplit">—</small>
+          </div>
+        </div>
+        <div class="mine-grid" id="mineGrid"></div>
+        <p class="mine-note" id="mineNote"></p>
+      </div>
+
+      <div class="cards">
+        <div class="card green">
+          <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M16 12h5"/></svg></div>Available Balance</div>
+          <div class="row">
+            <div><div class="val" id="cardAvailable">$0.00</div><div class="sub">Ready to withdraw</div></div>
+            <a class="btn btn-sm btn-success" href="#withdraw">Withdraw</a>
+          </div>
+        </div>
+        <div class="card">
+          <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8c0-2 3-3 7-3s7 1 7 3-3 3-7 3-7 1-7 3 3 3 7 3 7-1 7-3"/></svg></div>Total Earnings (simulado)</div>
+          <div class="val up" id="cardEarnings">$0.00</div>
+          <div class="sub">Créditos acumulados de taxa configurada</div>
+        </div>
+        <div class="card">
+          <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 2.5"/></svg></div>Active Deposit</div>
+          <div class="row">
+            <div><div class="val" id="cardActiveDeposit">$0.00</div><div class="sub">Currently invested</div></div>
+            <a class="btn btn-sm btn-primary" href="#deposit">Invest</a>
+          </div>
+        </div>
+        <div class="card green">
+          <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h16v5H4z"/><path d="M4 13h16v7H4z"/><path d="M8 17h4"/></svg></div>Total Withdrawn</div>
+          <div class="val" id="cardWithdrawn">$0.00</div>
+          <div class="sub">Pending: <b id="cardPendingWithdraw" style="color:#fbbf24">$0.00</b></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-bottom:24px">
+        <h3>Link de indicação</h3>
+        <p class="desc">
+          Ganhe <b>5% de comissão</b> sobre o <b>primeiro depósito</b> de cada usuário que se cadastrar com seu link.
+          A comissão é creditada no seu saldo quando o depósito do indicado for aprovado pelo admin.
+        </p>
+        <div class="aff-box">
+          <input id="refLink" readonly value="" placeholder="Link de indicação"/>
+          <button class="btn" id="copyRefBtn" type="button">Copiar</button>
+        </div>
+        <p class="fee-note">Seu código: <b id="refCode">—</b> · Comissão: <b>5% no 1º depósito</b></p>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <h3>Últimos depósitos <span><a href="#deposits" style="color:var(--green,#10b981)">ver todos →</a></span></h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Plano</th><th>Valor</th><th>Status</th></tr></thead>
+            <tbody id="recentDeposits"><tr class="empty-row"><td colspan="3">Carregando…</td></tr></tbody>
+          </table></div>
+        </div>
+        <div class="panel">
+          <h3>Últimos saques <span><a href="#history" style="color:var(--green,#10b981)">ver todos →</a></span></h3>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Valor</th><th>Carteira</th><th>Status</th></tr></thead>
+            <tbody id="recentWithdrawals"><tr class="empty-row"><td colspan="3">Carregando…</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+
+      <!-- Posições: os contadores ao vivo acima já mostram cada plano.
+           Aqui fica só o extrato dia a dia do que foi de fato creditado. -->
+      <div class="panel" style="margin-top:24px">
+        <h3>Histórico de créditos</h3>
+        <div id="accrualList"><p class="desc">Carregando…</p></div>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: DEPOSIT (desativado — sem planos) ============ -->
+    <section class="view" id="view-deposit">
+      
+      <div class="panel">
+        <h3>Investir em plano</h3>
+        <div class="bal-strip">
+          <div class="bal-cell">
+            <span>Saldo disponível para investir</span>
+            <b id="invAvailable">$0.00</b>
+            <small>descontando saques pendentes</small>
+          </div>
+          <div class="bal-cell">
+            <span>Disponível para saque</span>
+            <b id="invWithdrawable">$0.00</b>
+            <small id="invWithdrawSub">verificando…</small>
+          </div>
+        </div>
+        <p class="desc">
+          Escolha o plano e o valor. O dep&#243;sito fica <b>pendente</b> at&#233; a valida&#231;&#227;o no painel
+          administrativo; s&#243; depois disso a posi&#231;&#227;o come&#231;a a creditar rendimento di&#225;rio.
+        </p>
+        <form class="form" id="depositForm" style="max-width:none">
+          <div><label for="depPlan">Plano</label><select id="depPlan" required><option value="">Carregando planos&hellip;</option></select></div>
+          <div id="depPlanHint"></div>
+          <div><label for="depAmount">Valor (USD)</label><input id="depAmount" type="number" min="1" step="0.01" placeholder="100.00" required/></div>
+          <div><label for="depGateway">Moeda / Rede</label><select id="depGateway" required><option value="">Carregando redes&hellip;</option></select></div>
+<div class="gateway-address" id="gatewayInfo" hidden style="margin-top:12px"></div>
+           <div><button class="btn btn-primary" type="submit" id="depSubmit">Investir no plano</button></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: WALLET (ativo -> carteira -> hash) ============ -->
+    <section class="view" id="view-wallet">
+      <form class="form" id="topupForm" style="max-width:none">
+      <div class="panel" style="margin-bottom:18px">
+        <h3><span class="step-num">1</span> Escolha o ativo</h3>
+        <p class="desc">Primeiro selecione a moeda e a rede. O endereço da plataforma e a carteira ideal aparecem em seguida.</p>
+        <div><label for="topGateway">Moeda / Rede</label><select id="topGateway" required><option value="">Carregando redes…</option></select></div>
+        <div class="gateway-address" id="topGatewayInfo" hidden style="margin-top:12px"></div>
+        <div style="margin-top:10px">
+          <input type="hidden" id="topAddrValue" value=""/>
+          <button class="btn btn-sm" id="copyTopAddrBtn" type="button">Copiar endereço</button>
+        </div>
+      </div>
+      <div class="panel" style="margin-bottom:18px">
+        <h3><span class="step-num">2</span> Conecte sua carteira</h3>
+        <p class="desc" id="walletRecommend">Selecione um ativo acima para ver a carteira recomendada.</p>
+        <div class="wallet-grid">
+          <button class="btn btn-ghost wallet-btn" id="btnMetaMask" type="button">🦊 MetaMask<small>redes EVM</small><span class="rec-tag" hidden>Recomendada</span></button>
+          <button class="btn btn-ghost wallet-btn" id="btnPhantom" type="button">👻 Phantom<small>Solana</small><span class="rec-tag" hidden>Recomendada</span></button>
+          <button class="btn btn-ghost wallet-btn" id="btnCoinbase" type="button">🔵 Coinbase Wallet<small>redes EVM</small><span class="rec-tag" hidden>Recomendada</span></button>
+        </div>
+        <div class="install-box" id="walletInstallBox" hidden>
+          <b id="walletInstallTitle">Extensão não encontrada</b>
+          <ol id="walletInstallSteps"></ol>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+            <a class="btn btn-primary btn-sm" id="walletInstallLink" href="#" target="_blank" rel="noopener">Instalar agora</a>
+            <button class="btn btn-sm" id="walletInstallRetry" type="button">Já instalei, tentar de novo</button>
+          </div>
+        </div>
+        <p class="fee-note" id="walletStatus">Nenhuma carteira conectada.</p>
+        <p><button class="btn btn-sm" id="walletDisconnect" type="button" style="display:none">Desconectar</button></p>
+      </div>
+      <div class="panel">
+        <h3><span class="step-num">3</span> Envie e valide com o hash</h3>
+        <div class="alert error" style="margin-bottom:16px">⚠️ <b>ATENÇÃO — confira a REDE antes de enviar.</b> Envie <b>somente na rede indicada no passo 1</b>. Transferências na rede errada podem resultar em <b>PERDA definitiva dos fundos</b>. Confira os primeiros e últimos caracteres do endereço antes de confirmar.</div>
+        <div class="form" style="max-width:560px">
+          <div><label for="topAmount">Valor enviado (USD)</label><input id="topAmount" type="number" min="1" step="0.01" placeholder="100.00" required/></div>
+          <div><label for="topTxHash">Hash da transferência (obrigatório)</label><input id="topTxHash" type="text" placeholder="0x… ou ID da transação" required/><span class="form-hint">Cole o hash/ID gerado pela sua carteira após enviar. O saldo só é creditado após validação desse hash.</span></div>
+          <div><button class="btn btn-primary" type="submit" id="topupSubmit">Enviar para validação</button></div>
+        </div>
+      </div>
+      </form>
+    </section>
+
+    <!-- ============ VIEW: WITHDRAW ============ -->
+    <section class="view" id="view-withdraw">
+      <div class="panel">
+        <h3>Sacar</h3>
+        <div class="bal-strip">
+          <div class="bal-cell">
+            <span>Saldo disponível</span>
+            <b id="wdAvailable">$0.00</b>
+          </div>
+          <div class="bal-cell">
+            <span>Status do saque</span>
+            <b id="wdRule">—</b>
+            <small id="wdRuleSub">verificando…</small>
+          </div>
+        </div>
+        <p class="desc" id="wdRuleNote">O saque é liberado somente depois que você investir em um plano.</p>
+        <form class="form" id="withdrawForm">
+          <div class="form-row">
+            <div><label for="wdAmount">Amount (USD)</label><input id="wdAmount" type="number" min="1" step="0.01" placeholder="50.00" required/></div>
+            <div><label for="wdGateway">Gateway</label><select id="wdGateway" required><option value="">Carregando gateways…</option></select></div>
+          </div>
+          <div><label for="wdWallet">Wallet (destino)</label><input id="wdWallet" type="text" placeholder="Your wallet address" required/></div>
+          <div><button class="btn btn-primary" type="submit" id="wdSubmit">Solicitar saque</button></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: HISTORY ============ -->
+    <section class="view" id="view-history">
+      <div class="panel">
+        <h3>Histórico Transações</h3>
+        <p class="desc">All deposits and withdrawals on your account.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Tipo</th><th>Valor</th><th>Status</th><th>Data</th></tr></thead>
+          <tbody id="historyBody"><tr class="empty-row"><td colspan="4">Carregando…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: DEPOSITS ============ -->
+    <section class="view" id="view-deposits">
+      <div class="panel">
+        <h3>Meus Depósitos</h3>
+        <p class="desc">Every deposit request with plan, gateway and status.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Plano</th><th>Valor</th><th>Gateway</th><th>Status</th><th>Data</th></tr></thead>
+          <tbody id="depositsBody"><tr class="empty-row"><td colspan="5">Carregando…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: REFERRALS ============ -->
+    <section class="view" id="view-referrals">
+      <div class="panel" style="margin-bottom:18px">
+        <h3>Link de indicação <span>sem comissão</span></h3>
+        <p class="desc">
+          Não pagamos bônus por indicado. Um prêmio por recrutar depósito não vem de rendimento — vem do
+          dinheiro de quem entra depois, e por isso foi removido.
+        </p>
+        <div class="aff-box">
+          <input id="refLink2" readonly value="" placeholder="Link (sem comissão)"/>
+          <button class="btn" id="copyRefBtn2" type="button">Copiar</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Contas que usaram seu link</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Usuário</th><th>Data de cadastro</th></tr></thead>
+          <tbody id="referralsBody"><tr class="empty-row"><td colspan="2">Carregando…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: SECURITY ============ -->
+    <section class="view" id="view-security">
+      <div class="panel">
+        <h3>Segurança — trocar senha</h3>
+        <p class="desc">Use a strong, unique password.</p>
+        <form class="form" id="securityForm">
+          <div><label for="secCurrent">Senha atual</label><input id="secCurrent" type="password" autocomplete="current-password" required/></div>
+          <div><label for="secNew">Nova senha</label><input id="secNew" type="password" autocomplete="new-password" minlength="6" required/></div>
+          <div><label for="secNew2">Confirmar nova senha</label><input id="secNew2" type="password" autocomplete="new-password" minlength="6" required/></div>
+          <div><button class="btn btn-primary" type="submit" id="secSubmit">Atualizar senha</button></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ VIEW: SETTINGS ============ -->
+    <section class="view" id="view-settings">
+      <div class="panel">
+        <h3>Config Conta</h3>
+        <p class="desc">Update your account email.</p>
+        <form class="form" id="settingsForm">
+          <div><label for="setUsername">Username</label><input id="setUsername" type="text" disabled/></div>
+          <div><label for="setEmail">Email</label><input id="setEmail" type="email" required/></div>
+          <div><button class="btn btn-primary" type="submit" id="setSubmit">Salvar</button></div>
+        </form>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+<script src="./js/ticker.js"></script>
+<script src="./js/dashboard.js"></script>
+</body>
+</html>

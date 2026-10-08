@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora — Login</title>
+<link rel="stylesheet" href="./css/style.css"/>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
+<link rel="apple-touch-icon" href="./favicon.svg"/>
+</head>
+<body>
+<header class="header"><div class="container header-inner">
+  <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora<small>Trading IA</small></span></a>
+  <div class="header-actions" style="display:flex"><a class="btn btn-ghost" href="./index.html" style="padding:9px 16px">← Voltar</a><a class="btn btn-primary" href="./signup.html" style="padding:9px 16px">Criar conta</a></div>
+</div></header>
+
+<!-- TICKER (mesma faixa que o painel do usuário) -->
+<div class="container" style="margin-top:16px">
+  <div class="ticker" aria-label="Preços cripto"><div class="ticker-track" id="tickerTrack"></div></div>
+</div>
+
+<main class="auth-wrap"><div class="auth-card">
+  <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora</span></a>
+  <h1>Bem-vindo de volta</h1>
+  <p class="sub">Acesse para acompanhar seus rendimentos por dia.</p>
+  <div class="alert" id="alert"></div>
+  <form id="loginForm" novalidate>
+    <div class="field"><label for="login">Usuário ou e-mail</label><input id="login" type="text" placeholder="demo ou voce@email.com" autocomplete="username" required/></div>
+    <div class="field"><label for="password">Senha</label><input id="password" type="password" placeholder="••••••••" autocomplete="current-password" required/></div>
+    <button class="btn btn-primary btn-block" type="submit">Entrar</button>
+  </form>
+  <div class="auth-links"><a href="./forgot.html">Esqueci a senha</a><a href="./signup.html">Criar conta</a></div>
+</div></main>
+<script src="./js/ticker.js"></script>
+<script src="./js/auth.js"></script>
+</body>
+</html>

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora — Rendimento DeFi na Solana (SOL e USDT)</title>
+<meta name="description" content="Nexora: painel de dados on-chain de rendimento DeFi na Solana. Staking de SOL via Jito e vaults USDT via Kamino. Sem custodia, sem promessa de retorno."/>
+<link rel="stylesheet" href="./css/style.css"/>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
+<link rel="apple-touch-icon" href="./favicon.svg"/>
+</head>
+<body>
+
+<header class="header">
+  <div class="container header-inner">
+    <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora<small>DeFi on Solana</small></span></a>
+    <nav class="nav">
+      <a href="#sobre" data-i18n="nav_about">Sobre</a>
+      <a href="#estrategias">Protocolos</a>
+      <a href="#rendimento">Rendimento</a>
+      <a href="#faq" data-i18n="nav_faq">FAQ</a>
+      <a href="#contato" data-i18n="nav_contact">Contato</a>
+    </nav>
+    <div class="header-actions">
+      <button class="lang-toggle" id="langToggle" type="button">EN</button>
+      <a class="btn btn-ghost" href="./login.html" style="padding:9px 16px">Login</a>
+      <a class="btn btn-primary" href="./signup.html" style="padding:9px 16px" data-i18n="nav_signup">Criar conta</a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="#sobre">Sobre</a>
+    <a href="#planos">Planos</a>
+    <a href="#faq">FAQ</a>
+    <a href="#contato">Contato</a>
+    <div class="row">
+      <a class="btn btn-ghost btn-block" href="./login.html">Login</a>
+      <a class="btn btn-primary btn-block" href="./signup.html">Criar conta</a>
+    </div>
+  </div>
+</header>
+
+<!-- TICKER (mesma faixa que o painel do usuário) -->
+<div class="container" style="margin-top:16px">
+  <div class="ticker" aria-label="Preços cripto"><div class="ticker-track" id="tickerTrack"></div></div>
+</div>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <span class="hero-badge"><span class="pulse"></span> <span data-i18n="hero_badge">Protocolos DeFi reais, na sua carteira</span></span>
+      <h1 data-i18n="hero_title">Rendimento DeFi <span class="grad-text">na Solana</span> sem intermediar seu dinheiro</h1>
+      <p class="lead" data-i18n="hero_sub">A Nexora mostra os dados on-chain reais do staking de SOL (Jito) e dos vaults USDT (Kamino). Você conecta a Phantom e opera direto no protocolo — a Nexora nunca recebe seus fundos.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="./yield.html">Ver rendimento real</a>
+        <a class="btn btn-ghost" href="#rendimento">Simular composição</a>
+      </div>
+      <div class="hero-mini">
+        <span>✔ APY <strong>retroativa</strong>, nunca garantida</span>
+        <span>✔ Custódia <strong>100% sua</strong></span>
+        <span>✔ Risco de <strong>smart contract</strong> existe</span>
+      </div>
+    </div>
+    <div class="hero-card">
+      <h3>📊 Dados reais da rede</h3>
+      <div class="live-profit"><span>SOL em staking no Jito<br/><b id="heroBalance">carregando…</b></span></div>
+      <div class="bar"><i id="heroBar"></i></div>
+      <p class="hero-note">Taxa de conversão lida on-chain: <b id="jitoRate">—</b>. Se a fonte não responder, o valor fica vazio — nunca é estimado.</p>
+      <div style="display:flex;gap:10px;margin-top:14px">
+        <a class="btn btn-primary btn-block" href="#rendimento">Calcular</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ESTRATÉGIAS -->
+<section id="estrategias" style="padding-top:20px">
+  <div class="container">
+    <span class="section-kicker">Protocolos</span>
+    <h2 class="section-title">De onde vem o rendimento</h2>
+    <p class="section-sub">Dois caminhos reais de rendimento em Solana, sem bots opacos e sem promessa de lucro.</p>
+    <div class="grid grid-2">
+      <div class="card"><div class="icon">◎</div><span class="tag">Staking de SOL</span><h3>Jito (jitoSOL)</h3><p>Você delega SOL ao pool do Jito e recebe jitoSOL na sua própria carteira. A taxa de conversão é pública e verificável on-chain a qualquer momento.</p></div>
+      <div class="card violet"><div class="icon">◈</div><span class="tag">Lending de USDT</span><h3>Vaults Kamino</h3><p>Você deposita USDT em vaults de protocols de borrowing na Solana. APY, TVL, número de depositantes e performance fee vêm da API oficial da Kamino.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- PLANOS -->
+<section id="planos">
+  <div class="container">
+    <span class="section-kicker">Planos de rendimento</span>
+    <h2 class="section-title" id="plansTitle">Planos disponíveis</h2>
+    <p class="section-sub">
+      Escolha um plano, deposite e acompanhe o crédito diário. Juros simples, sem capitalização.
+    </p>
+    <div class="grid grid-3" id="plansGrid">
+      <div class="card plan"><p class="loading">Carregando planos&hellip;</p></div>
+    </div>
+    <p class="section-sub" style="margin-top:16px">
+      Também é possível ver <a href="/yield.html">rendimento real on-chain</a> (Jito e Kamino), onde a taxa
+      é a que o protocolo efetivamente pagou.
+    </p>
+  </div>
+</section>
+
+<!-- CALCULADORA -->
+<section id="calculadora" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="container">
+    <span class="section-kicker">Calculadora</span>
+    <h2 class="section-title">Simule um plano</h2>
+    <p class="section-sub">
+      Escolha o plano e o valor. O cálculo é <strong>juros simples</strong>: cada dia rende
+      <em>valor × taxa</em> sobre o principal, sem capitalizar. É a mesma conta que o
+      sistema credita.
+    </p>
+    <div class="card"><div class="calc">
+      <div>
+        <label for="calcPlan">Plano</label>
+        <select id="calcPlan"><option value="">Carregando planos…</option></select>
+        <br/><label for="calcAmount">Valor (USD)</label>
+        <input id="calcAmount" type="number" min="0" step="0.01" value=""/>
+        <label for="calcDays">Dias</label>
+        <select id="calcDays">
+          <option value="1" selected>1 dia</option>
+          <option value="3">3 dias</option>
+          <option value="7">7 dias</option>
+          <option value="15">15 dias</option>
+          <option value="30">30 dias</option>
+        </select>
+        <p class="hero-note" id="calcWarn" style="display:none;color:#f87171"></p>
+      </div>
+      <div class="calc-results">
+        <div class="calc-result"><span>Rendimento por dia</span><b id="rDaily">—</b></div>
+        <div class="calc-result highlight"><span>Lucro no período</span><b id="rNet">—</b></div>
+        <div class="calc-result"><span>Total (principal + lucro)</span><b id="rTotal">—</b></div>
+        <p class="hero-note" id="calcSimNote" style="display:none;color:#f59e0b">
+          Simulação — a taxa vem da configuração, não de rentabilidade de mercado.
+        </p>
+      </div>
+    </div>
+    <p class="hero-note">
+      Simulação: não considera smart contract, taxa de performance, contraparte ou
+      impermanent loss. Em operação real o valor pode ser menor — ou zero.
+    </p></div>
+  </div>
+</section>
+
+<!-- MOEDAS -->
+  <section id="moedas">
+    <div class="container">
+      <span class="section-kicker">Depósitos</span>
+      <h2 class="section-title">Moedas suportadas</h2>
+      <div class="coins" id="coinsGrid">
+        <!-- preenchido por JS via /api/crypto/prices -->
+      </div>
+    </div>
+  </section>
+
+<!-- SOBRE -->
+<section id="sobre" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="container">
+    <span class="section-kicker">Sobre o projeto</span>
+    <h2 class="section-title">O que a Nexora faz — e o que não faz</h2>
+    <p class="section-sub">Somos uma ferramenta de leitura de dados on-chain. Não operamos Strategies nem custodiamos recursos.</p>
+    <div class="grid grid-3">
+      <div class="card"><div class="icon">🔍</div><h3>Lê a blockchain</h3><p>Consulta a pool do Jito e a API pública da Kamino para mostrar saldos, taxas e APYs reais.</p></div>
+      <div class="card violet"><div class="icon">🔗</div><h3>Conecta sua carteira</h3><p>A carteira Phantom só é usada para <em>ler</em> saldos. Site nenhum recebe sua seed phrase.</p></div>
+      <div class="card"><div class="icon">🚫</div><h3>Não promete retorno</h3><p>Não temos plano com taxa fixa. Rentabilidade passada não é garantia de resultado futuro.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- VANTAGENS -->
+<section id="vantagens">
+  <div class="container">
+    <span class="section-kicker">Por que a Nexora</span>
+    <h2 class="section-title">Princípios do projeto</h2>
+    <div class="grid grid-3" style="margin-top:18px">
+      <div class="card"><div class="icon">⚡</div><h3>Dado verificável</h3><p>Cada número exibido tem endereço de contrato ou endpoint público que você pode conferir.</p></div>
+      <div class="card violet"><div class="icon">🧠</div><h3>Sem número inventado</h3><p>Se a RPC ou a API falhar, a tela mostra "indisponível". Nunca preenchemos com estimativa.</p></div>
+      <div class="card"><div class="icon">🔁</div><h3>Você opera</h3><p>Depósito e resgate acontecem no protocolo, na sua carteira. A Nexora não toca no seu dinheiro.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<section id="stats" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="container">
+    <span class="section-kicker">Transparência</span>
+    <h2 class="section-title">Números reais</h2>
+    <p class="section-sub">
+      Todos os números abaixo vêm do banco de dados desta instalação e da blockchain.
+      Enquanto não houver operação, os totais ficam em zero — não publicamos histórico inventado.
+    </p>
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat"><b id="stUsers">—</b><span>Contas cadastradas</span></div>
+      <div class="stat"><b id="stVolume">—</b><span>Depósitos ativos</span></div>
+      <div class="stat"><b id="stPaid">—</b><span>Total já pago</span></div>
+      <div class="stat"><b id="stJitoTvl">—</b><span>SOL no pool Jito (real)</span></div>
+    </div>
+    <p class="hero-note" style="margin-top:14px">
+      As três primeiras estatísticas são contadas do banco — com o histórico vazio, elas mostram
+      zero, e é isso que é verdade. Para APY real por protocolo, veja
+      <a href="/yield.html">/yield.html</a>.
+    </p>
+  </div>
+</section>
+
+<!-- COMO FUNCIONA -->
+<section id="como-funciona">
+  <div class="container">
+    <span class="section-kicker">Passo a passo</span>
+    <h2 class="section-title">Como funciona</h2>
+    <div class="steps" style="margin-top:18px">
+      <div class="step"><strong>1. Conecte sua carteira</strong><p class="hero-note">Phantom ou outra carteira Solana. Sem cadastro e sem senha — a carteira é a identidade.</p></div>
+      <div class="step"><strong>2. Escolha o protocolo</strong><p class="hero-note">Compare a taxa de câmbio do jitoSOL e os APYs dos vaults USDT da Kamino, lidos da rede.</p></div>
+      <div class="step"><strong>3. Depósito direto no protocolo</strong><p class="hero-note">A transacción é assinada pela sua carteira e vai direto para o stake pool ou vault. A Nexora não fica no meio.</p></div>
+      <div class="step"><strong>4. Resgate quando quiser</strong><p class="hero-note">jitoSOL volta para SOL sem lockup; nos vaults você resgata as ações. Você mantém a custódia.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- MISSÃO -->
+<section id="missao" style="background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(139,92,246,.12));border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="container"><span class="section-kicker">Nossa missão</span><h2 class="section-title">Informação honesta sobre DeFi</h2><p class="section-sub" style="max-width:760px">Rendimento em cripto vem de risco real: alguém aceita tomar risco e você recebe a contrapartida. Nosso papel é mostrar esse trade-off com dados públicos, sem esconder taxa, sem prometer número e sem passar a sua custódia.</p></div>
+</section>
+
+<!-- ROADMAP -->
+<section id="roadmap">
+  <div class="container">
+    <span class="section-kicker">Roadmap</span>
+    <h2 class="section-title">Para onde vamos</h2>
+    <div class="roadmap" style="margin-top:18px">
+      <div class="phase done"><h4>Fase 1 — Leitura on-chain ✅</h4><p>Painel com dados reais do Jito e dos vaults USDT da Kamino, leitura de saldo via Phantom.</p></div>
+      <div class="phase now"><h4>Fase 2 — Transparência 🔄</h4><p>Histórico de APY por janela,TVL e número de depositantes direto das APIs dos protocolos.</p></div>
+      <div class="phase"><h4>Fase 3 — Integração</h4><p>Operações on-chain assinadas pela própria carteira, após revisão de segurança.</p></div>
+      <div class="phase"><h4>Fase 4 — Relatórios</h4><p>Comparar custo (gas + performance fee) contra o rendimento auferido em cada vault.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- PARCEIROS -->
+<section id="parceiros" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
+  <div class="container">
+    <span class="section-kicker">Protocolos exibidos</span>
+    <h2 class="section-title">Onde o rendimento acontece</h2>
+    <p class="section-sub">A Nexora não é contraparte dessas operações: elas existem independentemente de nós, com contratos públicos e código aberto.</p>
+    <div style="margin-top:18px"><div class="exchanges" id="exchangesGrid"></div></div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq">
+  <div class="container" style="max-width:800px">
+    <span class="section-kicker">Dúvidas</span>
+    <h2 class="section-title">Perguntas frequentes</h2>
+    <div style="margin-top:18px" id="faqList">
+      <div class="faq-item"><button class="faq-q" type="button">Como recebo rendimento? <span>+</span></button><div class="faq-a">Direto no protocolo. Ao delegar SOL ao Jito você recebe jitoSOL na sua carteira; ao entrar num vault da Kamino você recebe ações do vault. O rendimento vem do protocolo, não de um saldo creditado pela Nexora.</div></div>
+      <div class="faq-item"><button class="faq-q" type="button">Qual o valor mínimo? <span>+</span></button><div class="faq-a">Não existe mínimo da Nexora — quem define é o protocolo. No staking do Jito o mínimo é de fato de 1 SOL por conta. Nos vaults da Kamino cada vault publica o seu mínimo. Confira na tabela.</div></div>
+      <div class="faq-item"><button class="faq-q" type="button">Quais moedas posso usar? <span>+</span></button><div class="faq-a">SOL (ou jitoSOL) no staking do Jito, e USDT (SPL) nos vaults de lending da Kamino. Ambas as rotas existem na Solana.</div></div>
+      <div class="faq-item"><button class="faq-q" type="button">A Nexora cobra ou paga comissão por indicação? <span>+</span></button><div class="faq-a">Não. O bônus de 3% a 10% por recrutar depósitos foi removido: ele só se paga com entrada de dinheiro novo, e não vem de rendimento de investimento. Se você ainda vir esse número em uma versão antiga, ele não existe mais.</div></div>
+      <div class="faq-item"><button class="faq-q" type="button">Existe risco? <span>+</span></button><div class="faq-a">Sim, e ele é o ponto. Há risco de smart contract, risco do emissor do token, risco de liquidez e risco de preço do ativo. APY é média retroativa e pode cair ou virar negativo. Não há garantia de retorno e você pode perder todo o valor.</div></div>
+      <div class="faq-item"><button class="faq-q" type="button">A Nexora fica com meu dinheiro? <span>+</span></button><div class="faq-a">Não. A carteira Phantom é usada só para ler saldos públicos. Não existe campo de chave privada nem pedido de seed phrase no site.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer id="contato">
+  <div class="container">
+    <div class="foot-grid">
+      <div><a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora</span></a><p class="hero-note" style="margin-top:10px;max-width:300px">Painel de leitura de dados DeFi on-chain na Solana. Não somos custodiante nem gestor de recursos. APY é média retroativa e não é garantia de retorno.</p></div>
+      <div><h5>Produto</h5><a href="#estrategias">Protocolos</a><a href="#rendimento">Simulador</a><a href="./yield.html">Painel on-chain</a></div>
+      <div><h5>Empresa</h5><a href="#sobre">Sobre</a><a href="#roadmap">Roadmap</a><a href="#missao">Missão</a></div>
+      <div><h5>Conta</h5><a href="./login.html">Login</a><a href="./signup.html">Criar conta</a><a href="./forgot.html">Recuperar senha</a></div>
+    </div>
+    <div class="foot-bottom"><span>© 2026 Nexora.</span><span>suporte@nexora.io · Telegram @nexora_suporte</span></div>
+  </div>
+</footer>
+
+<a class="tg-float" href="https://t.me/nexora_suporte" target="_blank" rel="noopener" aria-label="Suporte Telegram">✈</a>
+
+<script src="./js/ticker.js"></script>
+<script src="./js/landing.js"></script>
+</body>
+</html>

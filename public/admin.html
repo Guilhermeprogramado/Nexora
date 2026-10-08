@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora   Painel Admin</title>
+<link rel="stylesheet" href="./css/style.css"/>
+<link rel="stylesheet" href="./css/dashboard.css"/>
+<link rel="stylesheet" href="./css/admin.css"/>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
+<link rel="apple-touch-icon" href="./favicon.svg"/>
+</head>
+<body>
+<div class="page">
+
+<!-- SIDEBAR   mesmo designer do dashboard do usuário -->
+  <aside class="sidebar" id="sidebar" aria-label="Navegação admin">
+  <div class="brand">
+   <div class="dot">N</div>
+   <b>Nexora<small>admin panel</small></b>
+  </div>
+
+  <div class="welcome">Welcome back,<br><b id="adminWelcome">Admin</b>   <br><span class="muted" id="adminEmail" style="font-size:12px">carregando…</span></div>
+
+  <nav class="nav" id="adminNav">
+   <a href="#overview" data-tab="overview" class="active">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+    Visão Geral</a>
+   <a href="#users" data-tab="users">
+    <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5"/><circle cx="17.5" cy="9" r="2.5"/><path d="M16 14.6c2.8.4 5.5 2 5.5 5.4"/></svg>
+    Usuários</a>
+   <a href="#deposits" data-tab="deposits">
+    <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M16 12h5"/></svg>
+    Depósitos</a>
+   <a href="#withdrawals" data-tab="withdrawals">
+    <svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+    Saques</a>
+   <a href="#plans" data-tab="plans">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>
+    Planos</a>
+   <a href="#gateways" data-tab="gateways">
+    <svg viewBox="0 0 24 24"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg>
+    Gateways</a>
+   <a href="#settings" data-tab="settings">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"/></svg>
+    Config Site</a>
+  </nav>
+
+  <div class="cta">
+<p>Ações rápidas</p>
+    <button class="btn btn-sm" id="btnNewPlan" type="button" style="width:100%">+ Novo Plano</button>
+    <button class="btn btn-sm btn-ghost" id="btnNewGateway" type="button" style="width:100%;margin-top:8px">+ Novo Gateway</button>
+  </div>
+  <a class="home-link" href="./index.html">  Site</a>
+ </aside>
+ <div class="backdrop" id="backdrop"></div>
+
+ <!-- MAIN   mesmo designer do dashboard do usu rio -->
+ <main class="main content-admin">
+  <button class="hamburger" id="hamburger" aria-label="Abrir menu" type="button"><span></span><span></span><span></span></button>
+
+  <div class="topbar">
+   <h1 id="pageTitle">Visão Geral</h1>
+   <div class="topbar-right">
+    <span id="apiStatus" class="status-badge checking">  verificando API...  </span>
+    <span class="badge">  Nexora admin</span>
+    <button id="btnLogout" class="btn btn-sm btn-danger" type="button">Sair</button>
+   </div>
+  </div>
+
+  <div id="offlineBanner" class="alert error" style="display:none;margin-bottom:16px" role="alert">
+<b>API offline ou inacessível</b>
+    <span id="offlineMsg">Não foi possível alcançar o backend. Verifique se o servidor está rodando (npm start) e tente recarregar.</span>
+  </div>
+
+  <div id="inlineError"></div>
+
+  <!-- TICKER   igual usu rio -->
+  <div class="ticker" aria-label="Preços cripto"><div class="ticker-track" id="tickerTrack"></div></div>
+
+  <section id="view-overview" class="view active">
+   <div class="cards" id="overviewCards"></div>
+
+   <!-- CAIXA AO VIVO   todos os usuarios -->
+   <div class="panel" style="margin-bottom:24px">
+    <div class="panel-head">
+     <div>
+      <h3>Caixa e exposição <span>todos os usuários · atualiza sozinho</span></h3>
+      <p class="desc">Quanto está investido, quanto já foi gerado para os usuários e o quanto precisa ficar em caixa para pagar.</p>
+     </div>
+     <span class="live-badge" id="liveStamp">ao vivo</span>
+    </div>
+    <div class="live-grid" id="liveGrid">
+     <div class="live-cell">
+      <span class="lbl">Capital em posição <i title="Soma dos principais das posições ativas">?</i></span>
+      <b class="num" id="lv-invested">—</b>
+      <small id="lv-invested-sub">carregando…</small>
+     </div>
+     <div class="live-cell">
+      <span class="lbl">Gerado para os usuários <i title="Soma dos créditos de rendimento já lançados">?</i></span>
+      <b class="num" id="lv-generated">—</b>
+      <small id="lv-generated-sub">carregando…</small>
+     </div>
+     <div class="live-cell warn">
+      <span class="lbl">A pagar (caixa a guardar) <i title="Saldo já creditado + o que as posições ativas ainda vão creditar">?</i></span>
+      <b class="num" id="lv-cash">—</b>
+      <small id="lv-cash-sub">carregando…</small>
+     </div>
+     <div class="live-cell">
+      <span class="lbl">Saldo dos usuários <i title="Soma dos saldos disponíveis (inclui saques pedidos)">?</i></span>
+      <b class="num" id="lv-balance">—</b>
+      <small id="lv-balance-sub">carregando…</small>
+     </div>
+     <div class="live-cell">
+      <span class="lbl">Gerado por dia <i title="Custo diário das posições ativas">?</i></span>
+      <b class="num" id="lv-daily">—</b>
+      <small id="lv-daily-sub">carregando…</small>
+     </div>
+     <div class="live-cell">
+      <span class="lbl">Usuários</span>
+      <b class="num" id="lv-users">—</b>
+      <small id="lv-users-sub">carregando…</small>
+     </div>
+    </div>
+    <p class="hint muted" style="font-size:12.5px;margin-top:14px">Caixa a guardar = saldo já creditado aos usuários + o que as posições ativas ainda vão creditar até o fim do contrato.</p>
+   </div>
+
+   <!-- EVOLUCAO -->
+   <div class="panel" style="margin-bottom:24px">
+    <div class="panel-head">
+     <div>
+      <h3>Evolução da empresa <span>investimento dos usuários x rendimento gerado</span></h3>
+      <p class="desc">As linhas sobem conforme os usuários aplicam nos planos e o rendimento é creditado.</p>
+     </div>
+     <select id="evoDays" aria-label="Período do gráfico">
+      <option value="7">7 dias</option>
+      <option value="30" selected>30 dias</option>
+      <option value="90">90 dias</option>
+      <option value="365">1 ano</option>
+     </select>
+    </div>
+    <div class="chart-box" id="evoChart"><p class="desc">Carregando…</p></div>
+    <div class="legend" id="evoLegend"></div>
+   </div>
+
+   <!-- CENARIO: lucro x resultado aplicado x meta -->
+   <div class="panel">
+    <div class="panel-head">
+     <div>
+      <h3>Cenário da empresa <span>lucro gerado aos usuários x resultado aplicado x meta</span></h3>
+      <p class="desc">Lance aqui o resultado das aplicações da plataforma e acompanhe as três linhas.</p>
+     </div>
+     <span class="live-badge" id="goalBadge">meta —</span>
+    </div>
+
+    <div class="entry-forms">
+     <form id="resultForm" autocomplete="off">
+      <div class="entry-row">
+       <div><label for="r_date">Data</label><input id="r_date" type="date" required/></div>
+       <div><label for="r_amount">Resultado aplicado (USD)</label><input id="r_amount" type="number" step="0.01" min="0.01" required placeholder="0.00"/></div>
+       <div class="grow"><label for="r_note">Nota (opcional)</label><input id="r_note" type="text" maxlength="200" placeholder="Ex.: yield do vault USDT"/></div>
+       <div class="act"><button class="btn btn-primary" type="submit">Lançar resultado</button></div>
+      </div>
+     </form>
+     <form id="goalForm" autocomplete="off">
+      <div class="entry-row">
+       <div><label for="g_goal">Meta = lucro dos usuários × (fator)</label><input id="g_goal" type="number" step="0.01" min="0.01" required placeholder="1.30"/></div>
+       <div class="act"><button class="btn" type="submit">Salvar meta</button></div>
+      </div>
+      <p class="hint muted" style="font-size:12.5px;margin:8px 0 0" id="goalHint">1,30 = cobre o lucro dos usuários + 30% para a empresa.</p>
+     </form>
+    </div>
+
+    <div class="chart-box" id="scenarioChart"><p class="desc">Carregando…</p></div>
+    <div class="legend" id="scenarioLegend"></div>
+
+    <div class="table-wrap" style="margin-top:16px">
+     <table>
+      <thead><tr><th>Data</th><th>Resultado</th><th>Nota</th><th>Lançado em</th><th></th></tr></thead>
+      <tbody id="resultsBody"><tr><td colspan="5" class="loading">Carregando…</td></tr></tbody>
+     </table>
+    </div>
+   </div>
+
+   <div class="panel" style="margin-top:24px">
+    <h3>Resumo operacional</h3>
+    <p class="desc" id="overviewSummary">Carregando...</p>
+   </div>
+  </section>
+
+  <section id="view-users" class="view">
+   <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+<h3>Usuários <span>Aprovar = aprovar depósito  Saldo = editar saldo</span></h3>
+      <div class="toolbar">
+       <input id="userSearch" type="search" placeholder="Buscar por nome/email…" style="width:260px"/>
+     </div>
+    </div>
+    <div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>Usuário</th><th>Saldo</th><th>Ganhos</th><th>Dep. ativo</th><th>Afiliado %</th><th>Tipo</th><th>Ações</th></tr></thead>
+      <tbody id="usersBody"><tr><td colspan="8" class="loading">Carregando…</td></tr></tbody>
+    </table></div>
+   </div>
+  </section>
+
+  <section id="view-deposits" class="view">
+   <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+     <h3>Depósitos <span>Aprovar vira active e credita o usuário</span></h3>
+     <div class="toolbar">
+      <select id="depositFilter" style="min-width:160px"><option value="">Todos os status</option><option value="pending">Pendentes</option><option value="active">Ativos</option><option value="rejected">Rejeitados</option></select>
+     </div>
+    </div>
+    <div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>Usuário</th><th>Valor</th><th>Gateway</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
+      <tbody id="depositsBody"><tr><td colspan="7" class="loading">Carregando…</td></tr></tbody>
+    </table></div>
+   </div>
+  </section>
+
+  <section id="view-withdrawals" class="view">
+   <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+     <h3>Saques <span>Habilitar = aprovar e debitar saldo</span></h3>
+     <div class="toolbar">
+      <select id="withdrawFilter" style="min-width:160px"><option value="">Todos os status</option><option value="pending">Pendentes</option><option value="approved">Aprovados</option><option value="rejected">Rejeitados</option></select>
+     </div>
+    </div>
+    <div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>Usuário</th><th>Valor</th><th>Destino</th><th>Status</th><th>Data</th><th>Ações</th></tr></thead>
+      <tbody id="withdrawalsBody"><tr><td colspan="7" class="loading">Carregando…</td></tr></tbody>
+    </table></div>
+   </div>
+  </section>
+
+<section id="view-plans" class="view">
+   <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+     <h3>Planos de Investimento</h3>
+     <button class="btn btn-sm btn-primary" id="btnNewPlan" type="button">+ Novo plano</button>
+    </div>
+    <div st
+    <div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>Nome</th><th>Taxa/dia</th><th>Duração</th><th>Min</th><th>Max</th><th>Ativo</th><th>Ações</th></tr></thead>
+      <tbody id="plansBody"><tr><td colspan="8" class="loading">Carregando…</td></tr></tbody>
+    </table></div>
+   </div>
+  </section>
+
+  <section id="view-gateways" class="view">
+   <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+     <h3>Gateways de Pagamento <span>Desabilitar bloqueia depósito/saque nessa moeda</span></h3>
+    </div>
+    <div class="table-wrap"><table>
+<thead><tr><th>ID</th><th>Symbol</th><th>Nome</th><th>Rede</th><th>Carteira</th><th>Ativo</th><th>Ações</th></tr></thead>
+      <tbody id="gatewaysBody"><tr><td colspan="7" class="loading">Carregando…</td></tr></tbody>
+    </table></div>
+   </div>
+  </section>
+
+  <section id="view-settings" class="view">
+   <div class="panel">
+    <h3>Configurações do Site</h3>
+    <p class="desc">Altere cores, textos e contadores. Atualiza o CSS ao vivo.</p>
+    <form id="settingsForm" autocomplete="off">
+     <div class="settings-grid">
+      <div><label for="f_site_name">Nome do site (site_name)</label><input id="f_site_name" name="site_name" type="text" placeholder="Nexora"/></div>
+      <div><label for="f_support_telegram">Suporte Telegram (support_telegram)</label><input id="f_support_telegram" name="support_telegram" type="text" placeholder="https://t.me/nexora_suporte"/></div>
+      <div class="full"><label for="f_hero_title">Título do hero (hero_title)</label><input id="f_hero_title" name="hero_title" type="text" placeholder="Invista em cripto com segurança"/></div>
+      <div>
+       <label for="f_primary_color">Cor primária (primary_color)</label>
+       <div class="color-row">
+        <input id="f_primary_color_picker" type="color" value="#10b981"/>
+        <input id="f_primary_color" name="primary_color" type="text" placeholder="#10b981"/>
+       </div>
+      </div>
+      <div>
+       <label for="f_secondary_color">Cor secundária (secondary_color)</label>
+       <div class="color-row">
+        <input id="f_secondary_color_picker" type="color" value="#8b5cf6"/>
+        <input id="f_secondary_color" name="secondary_color" type="text" placeholder="#8b5cf6"/>
+       </div>
+      </div>
+      <div><label for="f_total_invested">Total investido (total_invested)</label><input id="f_total_invested" name="total_invested" type="number" step="0.01" min="0" placeholder="0"/></div>
+      <div><label for="f_running_days">Dias no ar (running_days)</label><input id="f_running_days" name="running_days" type="number" step="1" min="0" placeholder="0"/></div>
+     </div>
+     <div class="preview-bar">
+      <div class="bar"><i></i></div>
+      <span class="muted" style="font-size:12.5px">Pré-visualização ao vivo   as cores acima atualizam as variáveis <span class="mono">--primary / --secondary</span> do CSS em tempo real.</span>
+     </div>
+     <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" type="submit">   Salvar configurações</button>
+      <button id="btnResetColors" class="btn" type="button">Reverter cores</button>
+     </div>
+    </form>
+    <p class="hint muted" style="font-size:12.5px;margin-top:12px">Extras vindos da API (chaves desconhecidas) aparecem abaixo e também são salvos.</p>
+    <div id="extraSettings"></div>
+   </div>
+  </section>
+
+  </main>
+</div>
+
+<!-- MODAL USUÁRIO -->
+<div id="userModal" class="modal-backdrop" role="dialog" aria-modal="true">
+ <div class="modal">
+  <h3>Editar usuário <span id="userModalTitle" class="muted"></span></h3>
+  <p class="muted" id="userModalHint" style="font-size:12.5px">PUT /api/admin/users/:id</p>
+  <form id="userForm">
+   <input type="hidden" id="u_id"/>
+   <div class="form-grid">
+    <div><label for="u_balance">Saldo (balance)   habilitar/ajustar</label><input id="u_balance" type="number" step="0.01" min="0" required/></div>
+    <div><label for="u_Ganhos">Ganhos (total_Ganhos)</label><input id="u_Ganhos" type="number" step="0.01" min="0" required/></div>
+    <div><label for="u_active_deposit">Depósito ativo (active_deposit)</label><input id="u_active_deposit" type="number" step="0.01" min="0"/></div>
+    <div><label for="u_affiliate">Taxa afiliado % (affiliate_rate)</label><input id="u_affiliate" type="number" step="0.01" min="0" max="100"/></div>
+    <div class="check-row full"><input id="u_admin" type="checkbox"/><label for="u_admin">Administrador (is_admin)</label></div>
+   </div>
+   <div class="modal-footer">
+    <button type="button" class="btn" data-close="userModal">Cancelar</button>
+    <button type="submit" class="btn btn-primary">Salvar</button>
+   </div>
+  </form>
+ </div>
+</div>
+
+<!-- MODAL PLANO -->
+<div id="planModal" class="modal-backdrop" role="dialog" aria-modal="true">
+ <div class="modal">
+  <h3 id="planModalTitle">Novo plano (simulação)</h3>
+  <p class="muted" style="font-size:12.5px">POST /api/admin/plans  PUT /api/admin/plans/:id</p>
+  <div style="border:1px solid #f59e0b;border-radius:10px;padding:12px;background:rgba(245,158,11,.08);margin-bottom:14px">
+   <strong style="color:#f59e0b"></strong>
+   <p class="desc" style="margin:6px 0 0">
+    O que for salvo aqui multiplica o principal todo dia no banco local, e nada mais.
+    N&#227;o existe pool, contrato ou contraparte pagando essa taxa.
+   </p>
+  </div>
+  <form id="planForm">
+   <input type="hidden" id="p_id"/>
+   <div class="form-grid">
+    <div><label for="p_name">Nome</label><input id="p_name" type="text" required placeholder="Nexora Start"/></div>
+    <div><label for="p_daily_rate">Taxa di&#225;ria (%)</label><input id="p_daily_rate" type="number" step="0.01" min="0" required placeholder="0.50"/></div>
+    <div><label for="p_duration_days">Dura&#231;&#227;o (dias)</label><input id="p_duration_days" type="number" min="1" step="1" required placeholder="1"/></div>
+    <div><label for="p_min_deposit">M&#237;nimo (USD)</label><input id="p_min_deposit" type="number" step="0.01" min="0" required placeholder="10"/></div>
+    <div><label for="p_max_deposit">M&#225;ximo (USD)</label><input id="p_max_deposit" type="number" step="0.01" min="0" required placeholder="999"/></div>
+    <div><label for="p_active">Ativo</label><select id="p_active"><option value="1">Sim</option><option value="0">N&#227;o</option></select></div>
+   </div>
+   <div class="modal-footer">
+    <button type="button" class="btn" data-close="planModal">Cancelar</button>
+    <button class="btn btn-primary" type="submit" id="p_submit">Salvar plano</button>
+   </div>
+  </form>
+ </div>
+</div>
+
+<!-- MODAL GATEWAY -->
+<div id="gatewayModal" class="modal-backdrop" role="dialog" aria-modal="true">
+ <div class="modal">
+  <h3 id="gatewayModalTitle">Novo gateway</h3>
+  <p class="muted" style="font-size:12.5px">POST /api/admin/gateways</p>
+  <form id="gatewayForm">
+   <input type="hidden" id="g_id"/>
+   <div class="form-grid">
+    <div><label for="g_symbol">Symbol (BTC, USDT  )</label><input id="g_symbol" type="text" required placeholder="USDT"/></div>
+    <div><label for="g_name">Nome</label><input id="g_name" type="text" required placeholder="Tether"/></div>
+    <div class="full"><label for="g_network">Rede (network)</label><input id="g_network" type="text" required placeholder="TRC20 / ERC20 / BEP20"/></div>
+    <div class="full"><label for="g_wallet">Carteira (wallet_address)</label><input id="g_wallet" type="text" required placeholder="T  " class="mono"/></div>
+    <div class="check-row full"><input id="g_active" type="checkbox" checked/><label for="g_active">Gateway ativo (habilita depósito/saque)</label></div>
+   </div>
+   <div class="modal-footer">
+    <button type="button" class="btn" data-close="gatewayModal">Cancelar</button>
+    <button type="submit" class="btn btn-primary">Salvar</button>
+   </div>
+  </form>
+ </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script src="./js/ticker.js"></script>
+<script src="./js/admin.js"></script>
+</body>
+</html>
+
+
+
+
+

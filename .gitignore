@@ -1,0 +1,18 @@
+# Dependências
+node_modules/
+
+# Banco de dados local (criado por `npm run init-db`)
+nexora.db
+nexora.db-shm
+nexora.db-wal
+
+# Credenciais / dados locais
+login.json
+usuario.txt
+
+# Logs e temporários
+*.log
+tmp-*
+tmp_*
+fix.mjs
+public/js/*.fixed

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora — Crypto Dashboard (UI Study)</title>
+<style>
+:root{
+  --bg:#0b0f14;
+  --bg2:#10161d;
+  --panel:#151d26;
+  --panel2:#1a2430;
+  --line:rgba(148,163,184,.14);
+  --txt:#e6edf3;
+  --muted:#8b98a9;
+  --green:#10b981;
+  --violet:#8b5cf6;
+  --green-soft:rgba(16,185,129,.14);
+  --violet-soft:rgba(139,92,246,.14);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:"Segoe UI",system-ui,sans-serif;
+  background:radial-gradient(1200px 600px at 80% -10%,rgba(139,92,246,.12),transparent),
+             radial-gradient(900px 500px at -10% 110%,rgba(16,185,129,.10),transparent),
+             var(--bg);
+  color:var(--txt);
+  min-height:100vh;
+}
+a{color:inherit;text-decoration:none}
+.page{display:flex;min-height:100vh}
+
+/* ============ SIDEBAR ============ */
+.sidebar{
+  width:250px;flex-shrink:0;
+  background:linear-gradient(180deg,var(--bg2),#0d131a);
+  border-right:1px solid var(--line);
+  padding:22px 14px;
+  display:flex;flex-direction:column;gap:26px;
+  position:sticky;top:0;height:100vh;
+}
+.brand{display:flex;align-items:center;gap:10px;padding:0 8px}
+.brand .dot{
+  width:34px;height:34px;border-radius:10px;
+  background:linear-gradient(135deg,var(--green),var(--violet));
+  display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;
+}
+.brand span{font-size:20px;font-weight:700;letter-spacing:.5px}
+.brand small{display:block;font-size:11px;color:var(--muted);font-weight:400}
+.welcome{padding:12px 10px;font-size:13px;color:var(--muted);border:1px dashed var(--line);border-radius:12px}
+.welcome b{color:var(--txt)}
+.nav{display:flex;flex-direction:column;gap:4px;flex:1}
+.nav a{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 14px;border-radius:12px;
+  color:var(--muted);font-size:14.5px;font-weight:600;
+  transition:all .2s;
+}
+.nav a:hover{background:var(--panel);color:var(--txt)}
+.nav a.active{background:linear-gradient(90deg,var(--green-soft),transparent);color:var(--green)}
+.nav a.active svg{stroke:var(--green)}
+.nav svg{width:20px;height:20px;stroke:var(--muted);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.cta{
+  margin-top:auto;padding:16px;border-radius:14px;text-align:center;
+  background:linear-gradient(135deg,var(--green-soft),var(--violet-soft));
+  border:1px solid var(--line);
+}
+.cta p{font-size:12.5px;color:var(--muted);margin-bottom:10px}
+.cta button{
+  width:100%;padding:10px;border:none;border-radius:10px;cursor:pointer;
+  background:linear-gradient(135deg,var(--green),var(--violet));
+  color:#fff;font-weight:700;font-size:14px;
+}
+.hamburger{display:none}
+
+/* ============ MAIN ============ */
+.main{flex:1;min-width:0;padding:26px 30px 60px}
+.topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:26px}
+.topbar h1{font-size:24px}
+.topbar .badge{
+  font-size:12px;color:var(--green);background:var(--green-soft);
+  padding:5px 12px;border-radius:99px;font-weight:700;
+}
+
+/* ---- ticker ---- */
+.ticker{
+  overflow:hidden;margin-bottom:28px;border:1px solid var(--line);
+  border-radius:14px;background:var(--bg2);
+  mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 5%,#000 95%,transparent);
+}
+.ticker-track{display:flex;width:max-content;animation:scroll 30s linear infinite}
+.ticker:hover .ticker-track{animation-play-state:paused}
+@keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+.tk{display:flex;align-items:center;gap:10px;padding:14px 26px;flex-shrink:0;border-right:1px solid var(--line)}
+.tk .coin{
+  width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:800;color:#fff;
+}
+.tk .info span{display:block;font-size:11px;color:var(--muted)}
+.tk .info b{font-size:13px}
+.tk .price{margin-left:14px;text-align:right}
+.tk .price b{font-size:14px}
+.tk .chg{font-size:11.5px;font-weight:700}
+.up{color:var(--green)} .down{color:#f87171}
+
+/* ---- stat cards ---- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:18px;margin-bottom:28px}
+.card{
+  border-radius:18px;padding:22px;border:1px solid var(--line);
+  background:linear-gradient(160deg,var(--panel),var(--panel2));
+  position:relative;overflow:hidden;transition:transform .25s,box-shadow .25s;
+}
+.card:hover{transform:translateY(-4px);box-shadow:0 14px 34px rgba(0,0,0,.35)}
+.card::after{
+  content:"";position:absolute;right:-40px;top:-40px;width:130px;height:130px;border-radius:50%;
+  background:radial-gradient(circle,rgba(139,92,246,.22),transparent 70%);
+}
+.card.green::after{background:radial-gradient(circle,rgba(16,185,129,.22),transparent 70%)}
+.card .lbl{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin-bottom:14px}
+.card .ico{width:34px;height:34px;border-radius:10px;background:var(--violet-soft);display:flex;align-items:center;justify-content:center}
+.card.green .ico{background:var(--green-soft)}
+.card .ico svg{width:18px;height:18px;stroke:var(--violet);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.card.green .ico svg{stroke:var(--green)}
+.card .val{font-size:26px;font-weight:800}
+.card .sub{font-size:12px;color:var(--muted);margin-top:6px}
+
+/* ---- chart + table ---- */
+.grid{display:grid;grid-template-columns:1.6fr 1fr;gap:18px}
+.panel{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:22px;min-width:0}
+.panel h3{font-size:15px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
+.panel h3 span{font-size:12px;color:var(--muted);font-weight:500}
+#chart{width:100%;height:260px;display:block}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;padding:12px 10px;color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--line)}
+td{padding:13px 10px;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:none}
+.pill{padding:4px 10px;border-radius:99px;font-size:11px;font-weight:700}
+.pill.buy{background:var(--green-soft);color:var(--green)}
+.pill.sell{background:rgba(248,113,113,.14);color:#f87171}
+
+@media(max-width:900px){
+  .sidebar{position:fixed;left:-270px;transition:left .3s;z-index:60}
+  .sidebar.open{left:0}
+  .hamburger{
+    display:flex;flex-direction:column;gap:5px;width:44px;height:44px;
+    border-radius:50%;background:var(--panel);border:1px solid var(--line);
+    align-items:center;justify-content:center;cursor:pointer;margin-bottom:16px;
+  }
+  .hamburger span{width:18px;height:2px;background:var(--txt);border-radius:2px}
+  .main{padding:18px 16px 50px}
+  .grid{grid-template-columns:1fr}
+}
+</style>
+<base target="_blank">
+</head>
+<body>
+<div class="page">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="dot">N</div>
+      <span>Nexora<small>crypto tracker · demo</small></span>
+    </div>
+    <div class="welcome">Bem-vindo de volta,<br><b>Willis1</b> 👋</div>
+    <nav class="nav">
+      <a href="#" class="active">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Painel</a>
+      <a href="#">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        Watchlist</a>
+      <a href="#">
+        <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>
+        Portfólio</a>
+      <a href="#">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+        Transações</a>
+      <a href="#">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"/></svg>
+        Configurações</a>
+      <a href="#">
+        <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        Sair</a>
+    </nav>
+    <div class="cta">
+      <p>Dados fictícios — estudo de UI/UX</p>
+      <button>Explorar ativos</button>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="hamburger" id="hamburger"><span></span><span></span><span></span></div>
+    <div class="topbar">
+      <h1>Painel</h1>
+      <span class="badge">● Dados de demonstração</span>
+    </div>
+
+    <!-- TICKER -->
+    <div class="ticker"><div class="ticker-track" id="tickerTrack"></div></div>
+
+    <!-- CARDS -->
+    <div class="cards">
+      <div class="card green">
+        <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M16 12h5"/></svg></div>Valor total</div>
+        <div class="val">$24.806,40</div>
+        <div class="sub up">▲ +4,8% esta semana</div>
+      </div>
+      <div class="card">
+        <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M5 8c0-2 3-3 7-3s7 1 7 3-3 3-7 3-7 1-7 3 3 3 7 3 7-1 7-3"/></svg></div>Lucro / Prejuízo</div>
+        <div class="val up">+$1.240,00</div>
+        <div class="sub">30 dias</div>
+      </div>
+      <div class="card">
+        <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l2.5 2.5"/></svg></div>Ativos na watchlist</div>
+        <div class="val">12</div>
+        <div class="sub">5 alertas ativos</div>
+      </div>
+      <div class="card green">
+        <div class="lbl"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 4h16v5H4z"/><path d="M4 13h16v7H4z"/><path d="M8 17h4"/></svg></div>Transações</div>
+        <div class="val">47</div>
+        <div class="sub">últimos 30 dias</div>
+      </div>
+    </div>
+
+    <!-- CHART + TABLE -->
+    <div class="grid">
+      <div class="panel">
+        <h3>Desempenho do portfólio <span>últimos 30 dias</span></h3>
+        <canvas id="chart"></canvas>
+      </div>
+      <div class="panel">
+        <h3>Transações recentes</h3>
+        <table>
+          <thead><tr><th>Ativo</th><th>Tipo</th><th>Valor</th></tr></thead>
+          <tbody>
+            <tr><td><b>BTC</b></td><td><span class="pill buy">Compra</span></td><td>$500,00</td></tr>
+            <tr><td><b>ETH</b></td><td><span class="pill sell">Venda</span></td><td>$320,00</td></tr>
+            <tr><td><b>SOL</b></td><td><span class="pill buy">Compra</span></td><td>$180,00</td></tr>
+            <tr><td><b>XRP</b></td><td><span class="pill sell">Venda</span></td><td>$95,00</td></tr>
+            <tr><td><b>BNB</b></td><td><span class="pill buy">Compra</span></td><td>$240,00</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+/* ---------- mobile sidebar ---------- */
+document.getElementById('hamburger').addEventListener('click',()=>{
+  document.getElementById('sidebar').classList.toggle('open');
+});
+
+/* ---------- ticker (dados fictícios) ---------- */
+const coins=[
+  {s:'BTC',n:'Bitcoin',p:97420,ch:+2.4,c:'#f7931a'},
+  {s:'ETH',n:'Ethereum',p:3415,ch:+1.1,c:'#627eea'},
+  {s:'SOL',n:'Solana',p:216.4,ch:+5.7,c:'#9945ff'},
+  {s:'XRP',n:'Ripple',p:2.34,ch:-1.2,c:'#25a4e8'},
+  {s:'BNB',n:'BNB',p:672.8,ch:+0.6,c:'#f3ba2f'},
+  {s:'ADA',n:'Cardano',p:0.92,ch:-0.8,c:'#2f6bd0'},
+];
+const fmt=v=>v>=1000?v.toLocaleString('en-US',{maximumFractionDigits:0}):v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const group=coins.map(c=>`
+  <div class="tk">
+    <div class="coin" style="background:${c.c}">${c.s[0]}</div>
+    <div class="info"><b>${c.s}</b><span>${c.n}</span></div>
+    <div class="price"><b>$${fmt(c.p)}</b><div class="chg ${c.ch>=0?'up':'down'}">${c.ch>=0?'▲':'▼'} ${Math.abs(c.ch)}%</div></div>
+  </div>`).join('');
+document.getElementById('tickerTrack').innerHTML=group+group; /* duplicado p/ loop infinito */
+
+/* ---------- gráfico em canvas ---------- */
+const cv=document.getElementById('chart'),ctx=cv.getContext('2d');
+let data=[],t=0;
+for(let i=0;i<60;i++){t+=(Math.random()-0.45)*60;data.push(22000+t);}
+function draw(){
+  const dpr=devicePixelRatio||1;
+  cv.width=cv.clientWidth*dpr;cv.height=260*dpr;
+  ctx.scale(dpr,dpr);
+  const w=cv.clientWidth,h=260,pad=10;
+  const min=Math.min(...data),max=Math.max(...data);
+  const X=i=>pad+i*(w-2*pad)/(data.length-1);
+  const Y=v=>h-pad-(v-min)/(max-min)*(h-2*pad);
+  /* grid */
+  ctx.strokeStyle='rgba(148,163,184,.1)';ctx.lineWidth=1;
+  for(let g=0;g<5;g++){const y=pad+g*(h-2*pad)/4;ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(w-pad,y);ctx.stroke();}
+  /* gradient fill */
+  const grad=ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,'rgba(16,185,129,.35)');grad.addColorStop(1,'rgba(16,185,129,0)');
+  ctx.beginPath();ctx.moveTo(X(0),Y(data[0]));
+  data.forEach((v,i)=>ctx.lineTo(X(i),Y(v)));
+  ctx.lineTo(X(data.length-1),h-pad);ctx.lineTo(X(0),h-pad);ctx.closePath();
+  ctx.fillStyle=grad;ctx.fill();
+  /* line */
+  ctx.beginPath();ctx.moveTo(X(0),Y(data[0]));
+  data.forEach((v,i)=>ctx.lineTo(X(i),Y(v)));
+  ctx.strokeStyle='#10b981';ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.stroke();
+  /* last point */
+  ctx.beginPath();ctx.arc(X(data.length-1),Y(data.at(-1)),4.5,0,7);
+  ctx.fillStyle='#8b5cf6';ctx.fill();
+}
+draw();addEventListener('resize',draw);
+</script>
+</body>
+</html>

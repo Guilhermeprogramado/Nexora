@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Nexora — Recuperar senha</title>
+<link rel="stylesheet" href="./css/style.css"/>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
+<link rel="apple-touch-icon" href="./favicon.svg"/>
+</head>
+<body>
+<header class="header"><div class="container header-inner">
+  <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora<small>Trading IA</small></span></a>
+  <div class="header-actions" style="display:flex"><a class="btn btn-ghost" href="./index.html" style="padding:9px 16px">← Voltar</a><a class="btn btn-primary" href="./login.html" style="padding:9px 16px">Login</a></div>
+</div></header>
+<main class="auth-wrap"><div class="auth-card">
+  <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora</span></a>
+  <h1>Recuperar senha</h1>
+  <p class="sub">Informe seu e-mail para receber o link de redefinição (demonstração).</p>
+  <div class="alert" id="alert"></div>
+  <form id="forgotForm" novalidate>
+    <div class="field"><label for="email">E-mail</label><input id="email" type="email" placeholder="voce@email.com" autocomplete="email" required/></div>
+    <button class="btn btn-primary btn-block" type="submit">Enviar link</button>
+  </form>
+  <div class="auth-links"><a href="./login.html">Voltar ao login</a><a href="./signup.html">Criar conta</a></div>
+</div></main>
+<script src="./js/auth.js"></script>
+</body>
+</html>

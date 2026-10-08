@@ -1,0 +1,3 @@
+@echo off
+echo Iniciando servidor Nexora...
+node server.js
