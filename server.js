@@ -1542,4 +1542,12 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { app, ensureDb, getDb, db, scheduleAccruals, isSimulation };
+// Export default = app (funcao req,res) para a Vercel tratar `server.js` como
+// Function raiz (sem apis), mantendo os helpers como propriedades p/ quem usa
+// require('./server').app.
+module.exports = app;
+module.exports.app = app;
+module.exports.ensureDb = ensureDb;
+module.exports.getDb = getDb;
+module.exports.scheduleAccruals = scheduleAccruals;
+module.exports.isSimulation = isSimulation;
