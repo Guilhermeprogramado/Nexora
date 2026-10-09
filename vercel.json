@@ -5,5 +5,8 @@
   ],
   "functions": {
     "api/index.js": { "maxDuration": 30 }
-  }
+  },
+  "crons": [
+    { "path": "/api/cron/accrue", "schedule": "0 0 * * *" }
+  ]
 }

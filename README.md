@@ -41,14 +41,16 @@ Abra: **http://localhost:3000/**
 
 ## Deploy na Vercel + Supabase
 
-1. Crie o projeto no Supabase e copie a **connection string** (Password mode). Defina-a como variável de ambiente no dashboard da Vercel:
-   - `DATABASE_URL` = `postgresql://postgres:...@db.<projeto>.supabase.co:5432/postgres`
+1. Crie o projeto no Supabase e copie a **connection string do POOLER** (Password mode). Defina-a como variável de ambiente no dashboard da Vercel:
+   - `DATABASE_URL` = `postgresql://postgres.<project-ref>:...@aws-0-<regiao>.pooler.supabase.com:5432/postgres` — **use o pooler**, o host direto `db.<ref>.supabase.co` não resolve DNS dentro da função da Vercel.
    - `PGSSL=disable` apenas se usar o Supabase local via CLI (na Vercel fica omitido — SSL on).
    - `JWT_SECRET` = valor aleatório (obrigatório em produção).
    - `CMC_API_KEY` = (opcional) chave da CoinMarketCap.
+   - `CRON_SECRET` = valor aleatório — o Cron Job da Vercel envia `Authorization: Bearer <CRON_SECRET>` para `POST /api/cron/accrue`.
 2. Push para o GitHub e **Import Project** na Vercel (framework: Other, build: nada, output: nada).
 3. O `vercel.json` redireciona tudo para `api/index.js` (Function Node 22, `maxDuration 30`), que exporta o mesmo `app` do `server.js`. O banco é SP completo, então não há escrita em disco.
 4. `engines` força Node 22.x e `overrides.rpc-websockets.uuid = ^11` elimina o `ERR_REQUIRE_ESM` (`@solana/web3.js` → `rpc-websockets` exigia `uuid@14` ESM-only).
+5. O `vercel.json` agenda o **accrue diário** (`"crons": [{ "path": "/api/cron/accrue", "schedule": "0 0 * * *" }]`, UTC). Fora do cron, o `scheduleAccruals` interno roda de hora em hora só enquanto a instância está quente — não confie nele em serverless. O accrue é idempotente (`ON CONFLICT DO NOTHING`), então um Post extra não credita duas vezes.
 
 > Nota: a senha do banco **não** é a publishable key `sb_publishable_...` — ela serve apenas para autenticação no client Supabase, não para a connection string do `pg`.
 

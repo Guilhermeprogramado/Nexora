@@ -30,26 +30,6 @@ const app = express();
 // Test endpoint at very top (before any middleware)
 app.get('/api/ping', async (req, res) => res.json({ ok: true, time: Date.now() }));
 
-// Diagnostico rapido do banco (antes do middleware que devolve 500 generico).
-// Devolve SEMPRE 200 com ok:false em caso de erro, para o corpo ser legivel.
-app.get('/api/-/db-check', async (req, res) => {
-  try {
-    await ensureDb();
-    const row = await db.prepare('SELECT 1 AS ok').get();
-    let host = 'n/a';
-    const m = String(process.env.DATABASE_URL || '').match(/@([^/:]+)/);
-    if (m) host = m[1];
-    return res.json({ ok: true, env_set: !!process.env.DATABASE_URL, host, select: row.ok });
-  } catch (err) {
-    return res.json({
-      ok: false,
-      env_set: !!process.env.DATABASE_URL,
-      error: String(err && err.message || err),
-      first_lines: String(err && err.stack || '').split('\n').slice(0, 4).join(' | ')
-    });
-  }
-});
-
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
@@ -1495,6 +1475,26 @@ app.post('/api/admin/accrue/run', authRequired, adminRequired, async (req, res) 
       return res.status(400).json({ error: 'onDate deve ser AAAA-MM-DD.' });
     }
     const r = await accrual.runAccruals(db, onDate ? { onDate: String(onDate) } : {});
+    return res.json({ ok: true, simulated: await isSimulation(), ...r });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Erro no accrue: ' + err.message });
+  }
+});
+
+// Endpoints de Cron da Vercel: o vercel.json agenda POST /api/cron/accrue
+// diariamente. Protegido por CRON_SECRET (Vercel envia no header
+// `Authorization: Bearer <CRON_SECRET>`). Sem CRON_SECRET configurado,
+// mantem funcionamento simplificado (accrue e idempotente).
+app.post('/api/cron/accrue', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  const sent = String((req.headers.authorization || '').replace(/^Bearer\s+/i, ''));
+  if (secret && sent !== secret) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  try {
+    await ensureDb();
+    const r = await accrual.runAccruals(db);
     return res.json({ ok: true, simulated: await isSimulation(), ...r });
   } catch (err) {
     console.error(err);
