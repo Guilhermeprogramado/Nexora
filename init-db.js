@@ -1,22 +1,44 @@
-// (Re)cria o banco chamando a mesma logica de init do server (via db.js)
-// Uso: npm run init-db  (apaga nexora.db atual e recria com seeds)
-const fs = require('fs');
-const DatabaseSync = require('node:sqlite').DatabaseSync;
-const { DB_PATH, initDatabase, ensureCompat } = require('./db');
+// Prepara o banco Supabase Postgres (schema + seeds idempotentes via db.js).
+// Uso:
+//   npm run init-db              -> garante schema/seeds (nao apaga dados)
+//   node init-db.js --reset      -> DROP de todas as tabelas e recria do zero
+// Exige DATABASE_URL no ambiente.
+const { getDb, initDatabase, closeDb } = require('./db');
 
-try {
-  if (fs.existsSync(DB_PATH)) {
-    fs.unlinkSync(DB_PATH);
-    console.log(`[nexora] DB antigo removido: ${DB_PATH}`);
+const TABLE_ORDER = [
+  'accruals',
+  'company_results',
+  'positions',
+  'transactions',
+  'withdrawals',
+  'deposits',
+  'settings',
+  'gateways',
+  'plans',
+  'users'
+];
+
+(async () => {
+  if (!process.env.DATABASE_URL) {
+    console.error('[nexora] DATABASE_URL nao definida. Exporte a connection string do Supabase.');
+    process.exit(1);
   }
-} catch (e) {
-  console.error('[nexora] Falha ao remover DB antigo:', e.message);
-  process.exit(1);
-}
-
-const db = new DatabaseSync(DB_PATH);
-ensureCompat(db);
-initDatabase(db);
-console.log(`[nexora] DB recriado com sucesso: ${DB_PATH}`);
-console.log('[nexora] Seed admin: username=admin email=admin@nexora.local senha=Admin123!');
-db.close();
+  try {
+    const db = await getDb();
+    if (process.argv.includes('--reset')) {
+      for (const t of TABLE_ORDER) {
+        await db.exec(`DROP TABLE IF EXISTS ${t} CASCADE;`);
+      }
+      console.log('[nexora] Tabelas removidas; recriando schema e seeds...');
+      await initDatabase(db);
+    } else {
+      console.log('[nexora] Schema assegurado (CREATE ... IF NOT EXISTS + seeds idempotentes).');
+    }
+    console.log('[nexora] Seed admin: username=admin email=admin@nexora.local senha=Admin123!');
+    await closeDb();
+    console.log('[nexora] Pronto.');
+  } catch (err) {
+    console.error('[nexora] Falha no init-db:', err.message);
+    process.exit(1);
+  }
+})();

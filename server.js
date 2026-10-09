@@ -5,30 +5,44 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
-const DatabaseSync = require('node:sqlite').DatabaseSync;
-const { DB_PATH, initDatabase, ensureCompat } = require('./db');
+const { getDb } = require('./db');
 const accrual = require('./accrual');
 const solana = require('./solana');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'nexora-dev-secret-change-me';
 const PORT = process.env.PORT || 3000;
-const CMC_API_KEY = '15bff8b51bfd412b9ef3e83bb862b0a7';
+const CMC_API_KEY = process.env.CMC_API_KEY || '';
 const CMC_BASE_URL = 'https://pro-api.coinmarketcap.com/v1';
 const CMC_CACHE_TTL = 60000;
 
 let cmcCache = { data: null, timestamp: 0 };
 
-const db = new DatabaseSync(DB_PATH);
-ensureCompat(db);
-initDatabase(db);
+// Conexao com o banco e lazy: em serverless, cada instancia so conecta
+// quando a primeira requisicao chega (ver ensureDb no middleware abaixo).
+let db = null;
+async function ensureDb() {
+  if (!db) db = await getDb();
+  return db;
+}
 
 const app = express();
 
 // Test endpoint at very top (before any middleware)
-app.get('/api/ping', (req, res) => res.json({ ok: true, time: Date.now() }));
+app.get('/api/ping', async (req, res) => res.json({ ok: true, time: Date.now() }));
 
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
+
+// Garante que o banco esta pronto antes de qualquer rota usar `db`.
+app.use(async (req, res, next) => {
+  try {
+    await ensureDb();
+    next();
+  } catch (err) {
+    console.error('[db] falha ao inicializar:', err);
+    return res.status(500).json({ error: 'Falha ao inicializar o banco de dados.' });
+  }
+});
 
 // Static
 const publicDir = path.join(__dirname, 'public');
@@ -68,7 +82,7 @@ function signToken(user) {
   );
 }
 
-function authRequired(req, res, next) {
+async function authRequired(req, res, next) {
   const header = req.headers.authorization || '';
   const parts = header.split(' ');
   if (parts.length !== 2 || parts[0] !== 'Bearer' || !parts[1]) {
@@ -76,7 +90,7 @@ function authRequired(req, res, next) {
   }
   try {
     const payload = jwt.verify(parts[1], JWT_SECRET);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id);
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(payload.id);
     if (!user) return res.status(401).json({ error: 'Usuario nao encontrado.' });
     req.user = user;
     next();
@@ -107,9 +121,9 @@ function toNum(v) {
 
 // simulation_mode = '1' -> os planos e o accrue sao demonstracao.
 // Enquanto for '1', nenhuma resposta de rendimento pode ser lida como lucro.
-function isSimulation() {
+async function isSimulation() {
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'simulation_mode'").get();
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'simulation_mode'").get();
     if (!row) return false;
     const v = String(row.value).trim();
     return v === '1' || v.toLowerCase() === 'true' || v === 'on';
@@ -124,15 +138,15 @@ function maskUsername(name) {
   return name.slice(0, 2) + '***' + name.slice(-1);
 }
 
-function getSettingsObject() {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
+async function getSettingsObject() {
+  const rows = await db.prepare('SELECT key, value FROM settings').all();
   const obj = {};
   for (const r of rows) obj[r.key] = r.value;
   return obj;
 }
 
 // ---------- public auth ----------
-app.post('/api/auth/signup', authLimiter, (req, res) => {
+app.post('/api/auth/signup', authLimiter, async (req, res) => {
   try {
     const { username, email, password, ref } = req.body || {};
     const u = (username || '').trim();
@@ -149,8 +163,8 @@ app.post('/api/auth/signup', authLimiter, (req, res) => {
       return res.status(400).json({ error: 'Senha deve ter ao menos 6 caracteres.' });
     }
 
-    const exists = db
-      .prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE')
+    const exists = await db
+      .prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)')
       .get(u, e);
     if (exists) {
       return res.status(400).json({ error: 'Username ou email ja cadastrado.' });
@@ -160,7 +174,7 @@ app.post('/api/auth/signup', authLimiter, (req, res) => {
     if (ref) {
       const refCode = String(ref).trim();
       if (refCode) {
-        const referrer = db.prepare('SELECT id FROM users WHERE referral_code = ?').get(refCode);
+        const referrer = await db.prepare('SELECT id FROM users WHERE referral_code = ?').get(refCode);
         if (!referrer) {
           return res.status(400).json({ error: 'Codigo de indicacao invalido.' });
         }
@@ -169,12 +183,12 @@ app.post('/api/auth/signup', authLimiter, (req, res) => {
     }
 
     const hash = bcrypt.hashSync(p, 10);
-    const info = db
+    const info = await db
       .prepare(`INSERT INTO users (username, email, password_hash, referral_code, referred_by, affiliate_rate)
                 VALUES (?, ?, ?, ?, ?, 10)`)
       .run(u, e, hash, u, referredBy);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-    db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'signup', 0, 'Conta criada')`)
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+    await db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'signup', 0, 'Conta criada')`)
       .run(user.id);
 
     const token = signToken(user);
@@ -188,15 +202,15 @@ app.post('/api/auth/signup', authLimiter, (req, res) => {
   }
 });
 
-app.post('/api/auth/login', authLimiter, (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { login, password } = req.body || {};
     if (!login || !password) {
       return res.status(400).json({ error: 'Informe login e senha.' });
     }
     const l = String(login).trim();
-    const user = db
-      .prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE')
+    const user = await db
+      .prepare('SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR LOWER(email) = LOWER(?)')
       .get(l, l.toLowerCase());
     if (!user) {
       return res.status(401).json({ error: 'Credenciais invalidas.' });
@@ -214,9 +228,9 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
 });
 
 // ---------- public data ----------
-app.get('/api/public/settings', (req, res) => {
+app.get('/api/public/settings', async (req, res) => {
   try {
-    return res.json(getSettingsObject());
+    return res.json(await getSettingsObject());
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao carregar configuracoes.' });
@@ -225,10 +239,10 @@ app.get('/api/public/settings', (req, res) => {
 
 // Planos em modo simulacao. Cada item ganha `simulated: true` e a taxa
 // efetiva do periodo para o front poder rotular em vez de prometer.
-app.get('/api/public/plans', (req, res) => {
+app.get('/api/public/plans', async (req, res) => {
   try {
-    const sim = isSimulation();
-    const rows = db.prepare('SELECT * FROM plans WHERE active = 1 ORDER BY min_deposit ASC').all();
+    const sim = await isSimulation();
+    const rows = await db.prepare('SELECT * FROM plans WHERE active = 1 ORDER BY min_deposit ASC').all();
     return res.json(rows.map((p) => {
       const daily = Number(p.daily_rate) || 0;
       const days = parseInt(p.duration_days, 10) || 0;
@@ -250,9 +264,9 @@ app.get('/api/public/plans', (req, res) => {
   }
 });
 
-app.get('/api/public/gateways', (req, res) => {
+app.get('/api/public/gateways', async (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM gateways WHERE active = 1 ORDER BY id ASC').all();
+    const rows = await db.prepare('SELECT * FROM gateways WHERE active = 1 ORDER BY id ASC').all();
     return res.json(rows);
   } catch (err) {
     console.error(err);
@@ -260,18 +274,18 @@ app.get('/api/public/gateways', (req, res) => {
   }
 });
 
-app.get('/api/public/stats', (req, res) => {
+app.get('/api/public/stats', async (req, res) => {
   try {
     // Totais CALCULADOS do banco. As versoes anteriores liam
     // settings.total_invested / running_days, que eram valores fixos inventados
     // publicados como prova social ("$4.2M investidos, 63 dias").
-    const agg = db
+    const agg = await db
       .prepare(`SELECT
                   (SELECT COALESCE(SUM(amount), 0) FROM deposits WHERE status = 'active') AS total_active,
                   (SELECT COALESCE(SUM(amount), 0) FROM withdrawals WHERE status = 'approved') AS total_paid,
                   (SELECT COUNT(*) FROM users) AS user_count`)
       .get();
-    const first = db
+    const first = await db
       .prepare(`SELECT MIN(t) AS t FROM (
                   SELECT MIN(created_at) AS t FROM deposits
                   UNION ALL SELECT MIN(created_at) FROM withdrawals
@@ -281,12 +295,12 @@ app.get('/api/public/stats', (req, res) => {
       ? Math.max(0, Math.floor((Date.now() - new Date(first.t).getTime()) / 86400000))
       : 0;
 
-    const realDeps = db
+    const realDeps = await db
       .prepare(`SELECT d.amount, d.created_at, u.username
                 FROM deposits d JOIN users u ON u.id = d.user_id
                 WHERE d.status = 'active' ORDER BY d.id DESC LIMIT 5`)
       .all();
-    const realWds = db
+    const realWds = await db
       .prepare(`SELECT w.amount, w.created_at, u.username
                 FROM withdrawals w JOIN users u ON u.id = w.user_id
                 WHERE w.status = 'approved' ORDER BY w.id DESC LIMIT 5`)
@@ -306,7 +320,7 @@ app.get('/api/public/stats', (req, res) => {
     }));
 
     return res.json({
-      simulated: isSimulation(),
+      simulated: await isSimulation(),
       total_invested: agg.total_active,
       total_paid: agg.total_paid,
       user_count: agg.user_count,
@@ -405,23 +419,28 @@ app.get('/api/crypto/prices', async (req, res) => {
 });
 
 // ---------- user (auth) ----------
-app.get('/api/me', authRequired, (req, res) => {
-  const out = sanitizeUser(req.user);
-  out.simulated = isSimulation();
-  // Saca so quem ja investiu em um plano. O flag viaja na resposta para a
-  // UI mostrar o bloqueio antes do usuario preencher o formulario.
-  out.has_investment = !!db
-    .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
-    .get(req.user.id);
-  return res.json(out);
+app.get('/api/me', authRequired, async (req, res) => {
+  try {
+    const out = sanitizeUser(req.user);
+    out.simulated = await isSimulation();
+    // Saca so quem ja investiu em um plano. O flag viaja na resposta para a
+    // UI mostrar o bloqueio antes do usuario preencher o formulario.
+    out.has_investment = !!(await db
+      .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
+      .get(req.user.id));
+    return res.json(out);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Erro ao carregar perfil.' });
+  }
 });
 
 // Posicoes do usuario com projecao ate hoje. `simulated` viaja junto para a
 // UI rotular cada valor.
-app.get('/api/my/positions', authRequired, (req, res) => {
+app.get('/api/my/positions', authRequired, async (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM positions WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
-    const sim = isSimulation();
+    const rows = await db.prepare('SELECT * FROM positions WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
+    const sim = await isSimulation();
     return res.json({
       simulated: sim,
       positions: rows.map((p) => ({ ...p, ...accrual.projectPosition(p) }))
@@ -435,9 +454,9 @@ app.get('/api/my/positions', authRequired, (req, res) => {
 // Extrato dia a dia do accrue. `earned_until` e a soma dos creditos da conta
 // ate aquela linha (janela sobre TODAS as linhas, depois limita a 200) —
 // a coluna "saldo depois" antes viria undefined e renderizava $0.00.
-app.get('/api/my/accruals', authRequired, (req, res) => {
+app.get('/api/my/accruals', authRequired, async (req, res) => {
   try {
-    const rows = db
+    const rows = await db
       .prepare(`SELECT * FROM (
                   SELECT a.*, p.plan_name,
                          SUM(a.amount) OVER (
@@ -450,25 +469,25 @@ app.get('/api/my/accruals', authRequired, (req, res) => {
                   WHERE p.user_id = ?
                 ) ORDER BY accrual_date DESC, id DESC LIMIT 200`)
       .all(req.user.id);
-    return res.json({ simulated: isSimulation(), accruals: rows });
+    return res.json({ simulated: await isSimulation(), accruals: rows });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao carregar extrato.' });
   }
 });
 
-app.put('/api/me', authRequired, (req, res) => {
+app.put('/api/me', authRequired, async (req, res) => {
   try {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ error: 'Informe o email.' });
     const e = String(email).trim().toLowerCase();
     if (!isValidEmail(e)) return res.status(400).json({ error: 'Email invalido.' });
-    const exists = db
-      .prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id != ?')
+    const exists = await db
+      .prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?) AND id != ?')
       .get(e, req.user.id);
     if (exists) return res.status(400).json({ error: 'Email ja em uso.' });
-    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(e, req.user.id);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    await db.prepare('UPDATE users SET email = ? WHERE id = ?').run(e, req.user.id);
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     return res.json(sanitizeUser(user));
   } catch (err) {
     console.error(err);
@@ -476,7 +495,7 @@ app.put('/api/me', authRequired, (req, res) => {
   }
 });
 
-app.post('/api/me/change-password', authRequired, (req, res) => {
+app.post('/api/me/change-password', authRequired, async (req, res) => {
   try {
     const body = req.body || {};
     const current = body.currentPassword || body.current_password || body.current || '';
@@ -487,12 +506,12 @@ app.post('/api/me/change-password', authRequired, (req, res) => {
     if (String(next).length < 6) {
       return res.status(400).json({ error: 'Nova senha deve ter ao menos 6 caracteres.' });
     }
-    const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     if (!bcrypt.compareSync(String(current), fresh.password_hash)) {
       return res.status(400).json({ error: 'Senha atual incorreta.' });
     }
     const hash = bcrypt.hashSync(String(next), 10);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
+    await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, req.user.id);
     return res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -500,9 +519,9 @@ app.post('/api/me/change-password', authRequired, (req, res) => {
   }
 });
 
-app.get('/api/my/deposits', authRequired, (req, res) => {
+app.get('/api/my/deposits', authRequired, async (req, res) => {
   try {
-    const rows = db
+    const rows = await db
       .prepare(`SELECT d.*, p.name AS plan_name, g.symbol AS gateway_symbol
                 FROM deposits d
                 LEFT JOIN plans p ON p.id = d.plan_id
@@ -516,7 +535,7 @@ app.get('/api/my/deposits', authRequired, (req, res) => {
   }
 });
 
-app.post('/api/my/deposits', authRequired, (req, res) => {
+app.post('/api/my/deposits', authRequired, async (req, res) => {
   try {
     const { plan_id, amount, gateway_id, tx_hash } = req.body || {};
     const gwId = parseInt(gateway_id, 10);
@@ -529,7 +548,7 @@ app.post('/api/my/deposits', authRequired, (req, res) => {
       if (!Number.isInteger(planId) || planId <= 0) {
         return res.status(400).json({ error: 'Plano invalido.' });
       }
-      plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
+      plan = await db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
       if (!plan || !plan.active) {
         return res.status(400).json({ error: 'Plano indisponivel.' });
       }
@@ -545,7 +564,7 @@ app.post('/api/my/deposits', authRequired, (req, res) => {
     if (!Number.isFinite(amt) || amt <= 0) {
       return res.status(400).json({ error: 'Valor invalido.' });
     }
-    const gw = db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
+    const gw = await db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
@@ -554,16 +573,16 @@ app.post('/api/my/deposits', authRequired, (req, res) => {
       return res.status(400).json({ error: 'Informe o hash da transferência para validação do saldo.' });
     }
 
-    const info = db
+    const info = await db
       .prepare(`INSERT INTO deposits (user_id, plan_id, amount, gateway_id, status, tx_hash)
                 VALUES (?, ?, ?, ?, 'pending', ?)`)
       .run(req.user.id, planId, amt, gwId, tx);
-    db.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
+    await db.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
                 VALUES (?, 'deposit_pending', ?, ?)`)
       .run(req.user.id, amt, plan
         ? `Deposito #${info.lastInsertRowid} pendente (${plan.name}/${gw.symbol})`
         : `Adicao de saldo #${info.lastInsertRowid} pendente (${gw.symbol}) — hash ${tx}`);
-    const dep = db.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
+    const dep = await db.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
     return res.status(201).json(dep);
   } catch (err) {
     console.error(err);
@@ -579,7 +598,7 @@ app.post('/api/my/deposits', authRequired, (req, res) => {
 //
 // Rendimento real exige assinar a transação na própria carteira, direto no
 // protocolo. Até isso existir, a rota recusa explicitamente em vez de simular.
-app.post('/api/my/invest', authRequired, (req, res) => {
+app.post('/api/my/invest', authRequired, async (req, res) => {
   return res.status(410).json({
     error:
       'Investimento em plano nao existe mais. A Nexora nao opera planos nem recebe deposito. ' +
@@ -587,9 +606,9 @@ app.post('/api/my/invest', authRequired, (req, res) => {
   });
 });
 
-app.get('/api/my/withdrawals', authRequired, (req, res) => {
+app.get('/api/my/withdrawals', authRequired, async (req, res) => {
   try {
-    const rows = db
+    const rows = await db
       .prepare(`SELECT w.*, g.symbol AS gateway_symbol
                 FROM withdrawals w LEFT JOIN gateways g ON g.id = w.gateway_id
                 WHERE w.user_id = ? ORDER BY w.id DESC LIMIT 200`)
@@ -601,7 +620,7 @@ app.get('/api/my/withdrawals', authRequired, (req, res) => {
   }
 });
 
-app.post('/api/my/withdrawals', authRequired, (req, res) => {
+app.post('/api/my/withdrawals', authRequired, async (req, res) => {
   try {
     const { amount, gateway_id, wallet_to } = req.body || {};
     const amt = toNum(amount);
@@ -619,18 +638,18 @@ app.post('/api/my/withdrawals', authRequired, (req, res) => {
     if (!wallet || wallet.length < 5 || wallet.length > 200) {
       return res.status(400).json({ error: 'Carteira de destino invalida.' });
     }
-    const gw = db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
+    const gw = await db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
-    const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const available = (fresh.balance || 0) - (fresh.pending_withdraw || 0);
     if (amt > available) {
       return res.status(400).json({ error: 'Saldo insuficiente.' });
     }
     // Regra do produto: so saca quem ja investiu em um plano. Sem posicao
     // (aberta ou encerrada) nao ha origem de rendimento para resgatar.
-    const invested = db
+    const invested = await db
       .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
       .get(req.user.id);
     if (!invested) {
@@ -638,20 +657,20 @@ app.post('/api/my/withdrawals', authRequired, (req, res) => {
         error: 'Saque liberado apos investir em um plano. Invista primeiro em "Investir em Plano".'
       });
     }
-    const doTx = db.transaction(() => {
-      const info = db
+    const doTx = db.transaction(async (tdb) => {
+      const info = await tdb
         .prepare(`INSERT INTO withdrawals (user_id, amount, gateway_id, wallet_to, status)
                   VALUES (?, ?, ?, ?, 'pending')`)
         .run(req.user.id, amt, gwId, wallet);
-      db.prepare('UPDATE users SET pending_withdraw = pending_withdraw + ? WHERE id = ?')
+      await tdb.prepare('UPDATE users SET pending_withdraw = pending_withdraw + ? WHERE id = ?')
         .run(amt, req.user.id);
-      db.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
+      await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
                   VALUES (?, 'withdraw_pending', ?, ?)`)
         .run(req.user.id, amt, `Saque #${info.lastInsertRowid} solicitado (${gw.symbol})`);
       return info.lastInsertRowid;
     });
-    const id = doTx();
-    const wd = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id);
+    const id = await doTx;
+    const wd = await db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id);
     return res.status(201).json(wd);
   } catch (err) {
     console.error(err);
@@ -659,9 +678,9 @@ app.post('/api/my/withdrawals', authRequired, (req, res) => {
   }
 });
 
-app.get('/api/my/transactions', authRequired, (req, res) => {
+app.get('/api/my/transactions', authRequired, async (req, res) => {
   try {
-    const rows = db
+    const rows = await db
       .prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 100')
       .all(req.user.id);
     return res.json(rows);
@@ -671,10 +690,10 @@ app.get('/api/my/transactions', authRequired, (req, res) => {
   }
 });
 
-app.get('/api/my/referrals', authRequired, (req, res) => {
+app.get('/api/my/referrals', authRequired, async (req, res) => {
   try {
-    const me = db.prepare('SELECT referral_code FROM users WHERE id = ?').get(req.user.id);
-    const list = db
+    const me = await db.prepare('SELECT referral_code FROM users WHERE id = ?').get(req.user.id);
+    const list = await db
       .prepare('SELECT id, username, email, created_at FROM users WHERE referred_by = ? ORDER BY id DESC')
       .all(req.user.id);
     const host = req.get('host');
@@ -696,9 +715,9 @@ app.get('/api/my/referrals', authRequired, (req, res) => {
 });
 
 // ---------- admin ----------
-app.get('/api/admin/users', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/users', authRequired, adminRequired, async (req, res) => {
   try {
-    const rows = db.prepare('SELECT * FROM users ORDER BY id DESC LIMIT 500').all();
+    const rows = await db.prepare('SELECT * FROM users ORDER BY id DESC LIMIT 500').all();
     return res.json(rows.map(sanitizeUser));
   } catch (err) {
     console.error(err);
@@ -706,11 +725,11 @@ app.get('/api/admin/users', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.put('/api/admin/users/:id', authRequired, adminRequired, (req, res) => {
+app.put('/api/admin/users/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID invalido.' });
-    const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const target = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!target) return res.status(404).json({ error: 'Usuario nao encontrado.' });
     const b = req.body || {};
     const fields = {};
@@ -752,9 +771,9 @@ app.put('/api/admin/users/:id', authRequired, adminRequired, (req, res) => {
     }
     const keys = Object.keys(fields);
     if (keys.length === 0) return res.status(400).json({ error: 'Nenhum campo valido para atualizar.' });
-    const setClause = keys.map((k) => `${k} = @${k}`).join(', ');
-    db.prepare(`UPDATE users SET ${setClause} WHERE id = @id`).run({ ...fields, id });
-    const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const setClause = keys.map((k) => `${k} = ?`).join(', ');
+    await db.prepare(`UPDATE users SET ${setClause} WHERE id = ?`).run(...keys.map((k) => fields[k]), id);
+    const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     return res.json(sanitizeUser(updated));
   } catch (err) {
     console.error(err);
@@ -762,15 +781,15 @@ app.put('/api/admin/users/:id', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.delete('/api/admin/users/:id', authRequired, adminRequired, (req, res) => {
+app.delete('/api/admin/users/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID invalido.' });
     if (id === req.user.id) return res.status(400).json({ error: 'Você não pode excluir sua própria conta de administrador.' });
-    const target = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
+    const target = await db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
     if (!target) return res.status(404).json({ error: 'Usuario nao encontrado.' });
     // CASCADE limpa deposits/withdrawals/transactions; referred_by vira NULL
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    await db.prepare('DELETE FROM users WHERE id = ?').run(id);
     return res.json({ ok: true, deleted: target.username });
   } catch (err) {
     console.error(err);
@@ -778,9 +797,9 @@ app.delete('/api/admin/users/:id', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.get('/api/admin/deposits', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/deposits', authRequired, adminRequired, async (req, res) => {
   try {
-    const rows = db
+    const rows = await db
       .prepare(`SELECT d.*, u.username, p.name AS plan_name, g.symbol AS gateway_symbol
                 FROM deposits d
                 LEFT JOIN users u ON u.id = d.user_id
@@ -795,7 +814,7 @@ app.get('/api/admin/deposits', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.put('/api/admin/deposits/:id', authRequired, adminRequired, (req, res) => {
+app.put('/api/admin/deposits/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { status } = req.body || {};
@@ -803,29 +822,29 @@ app.put('/api/admin/deposits/:id', authRequired, adminRequired, (req, res) => {
     if (!['pending', 'active', 'rejected'].includes(status)) {
       return res.status(400).json({ error: 'Status invalido (pending/active/rejected).' });
     }
-    const dep = db.prepare('SELECT * FROM deposits WHERE id = ?').get(id);
+    const dep = await db.prepare('SELECT * FROM deposits WHERE id = ?').get(id);
     if (!dep) return res.status(404).json({ error: 'Deposito nao encontrado.' });
     if (dep.status === status) {
-      return res.json(db.prepare('SELECT * FROM deposits WHERE id = ?').get(id));
+      return res.json(await db.prepare('SELECT * FROM deposits WHERE id = ?').get(id));
     }
     const prev = dep.status;
-    const apply = db.transaction(() => {
-      db.prepare('UPDATE deposits SET status = ? WHERE id = ?').run(status, id);
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
+const apply = db.transaction(async (tdb) => {
+      await tdb.prepare('UPDATE deposits SET status = ? WHERE id = ?').run(status, id);
+      const user = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
       if (!user) return;
-if (prev !== 'active' && status === 'active') {
+      if (prev !== 'active' && status === 'active') {
         if (dep.plan_id) {
-          db.prepare('UPDATE users SET active_deposit = active_deposit + ? WHERE id = ?')
+          await tdb.prepare('UPDATE users SET active_deposit = active_deposit + ? WHERE id = ?')
             .run(dep.amount, dep.user_id);
-          db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
+          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
             .run(dep.user_id, dep.amount, `Deposito #${id} ativado`);
           // Abre a posicao: e ela que o accrue.js credita todo dia.
           // A taxa e a duracao sao copiadas daqui, entao editar o plano depois
           // nao muda o que ja foi prometido a quem investiu.
-          const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get(dep.plan_id);
+          const plan = await tdb.prepare('SELECT * FROM plans WHERE id = ?').get(dep.plan_id);
           if (plan) {
             try {
-              accrual.openPosition(db, {
+              await accrual.openPosition(tdb, {
                 userId: dep.user_id,
                 depositId: id,
                 planId: plan.id,
@@ -844,72 +863,72 @@ if (prev !== 'active' && status === 'active') {
           }
         } else {
           // Top-up (sem plano): hash validado -> credita SALDO (não depósito ativo)
-          db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
+          await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
             .run(dep.amount, dep.user_id);
-          db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'topup_approved', ?, ?)`)
+          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'topup_approved', ?, ?)`)
             .run(dep.user_id, dep.amount, `Adicao de saldo #${id} validada (hash confirmado)`);
         }
 
         // Comissão de afiliado: 5% do PRIMEIRO depósito do usuário indicado
         // Só paga se o usuário foi indicado (referred_by) e este é seu primeiro depósito aprovado
-        const user = db.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
-        if (user && user.referred_by) {
-          const firstDeposit = db.prepare(`
+        const referred = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
+        if (referred && referred.referred_by) {
+          const firstDeposit = await tdb.prepare(`
             SELECT COUNT(*) as cnt FROM deposits
             WHERE user_id = ? AND status = 'active'
           `).get(dep.user_id);
-          if (firstDeposit && firstDeposit.cnt === 1) {
-            const referrer = db.prepare('SELECT * FROM users WHERE id = ?').get(user.referred_by);
+          if (firstDeposit && Number(firstDeposit.cnt) === 1) {
+            const referrer = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(referred.referred_by);
             if (referrer) {
               const commission = Number(dep.amount) * 0.05;
-              db.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
+              await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
                 .run(commission, referrer.id);
-              db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'referral_commission', ?, ?)`)
-                .run(referrer.id, commission, `Comissão 5% do 1º depósito do usuário #${dep.user_id} (${user.username})`);
+              await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'referral_commission', ?, ?)`)
+                .run(referrer.id, commission, `Comissão 5% do 1º depósito do usuário #${dep.user_id} (${referred.username})`);
             }
           }
         }
       } else if (prev === 'active' && status !== 'active') {
         if (dep.plan_id) {
-          db.prepare(`UPDATE users SET active_deposit = CASE WHEN active_deposit - ? < 0 THEN 0 ELSE active_deposit - ? END WHERE id = ?`)
+          await tdb.prepare(`UPDATE users SET active_deposit = CASE WHEN active_deposit - ? < 0 THEN 0 ELSE active_deposit - ? END WHERE id = ?`)
             .run(dep.amount, dep.amount, dep.user_id);
           // Fecha a posicao e estorna o que ja foi creditado: reverter um
           // deposito ativo sem reverter o accumulate deixaria lucro orfao.
-          const open = db.prepare("SELECT * FROM positions WHERE deposit_id = ? AND status = 'active'").all(id);
+          const open = await tdb.prepare("SELECT * FROM positions WHERE deposit_id = ? AND status = 'active'").all(id);
           for (const pos of open) {
-            const paid = db.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM accruals WHERE position_id = ?').get(pos.id).s;
+            const paid = (await tdb.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM accruals WHERE position_id = ?').get(pos.id)).s;
             if (Number(paid) > 0) {
-              db.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END, total_earnings = CASE WHEN total_earnings - ? < 0 THEN 0 ELSE total_earnings - ? END WHERE id = ?')
+              await tdb.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END, total_earnings = CASE WHEN total_earnings - ? < 0 THEN 0 ELSE total_earnings - ? END WHERE id = ?')
                 .run(paid, paid, paid, paid, dep.user_id);
-              db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'accrual_reversal', ?, ?)`)
+              await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'accrual_reversal', ?, ?)`)
                 .run(dep.user_id, -paid, 'Rendimento (SIMULADO) estornado — deposito #' + id + ' revertido');
             }
-            db.prepare("UPDATE positions SET status = 'closed', closed_at = date('now') WHERE id = ?").run(pos.id);
+            await tdb.prepare("UPDATE positions SET status = 'closed', closed_at = to_char(now(), 'YYYY-MM-DD') WHERE id = ?").run(pos.id);
           }
-          db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_reversed', ?, ?)`)
+          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_reversed', ?, ?)`)
             .run(dep.user_id, dep.amount, `Deposito #${id} movido de active para ${status}`);
         } else {
-          db.prepare(`UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END WHERE id = ?`)
+          await tdb.prepare(`UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END WHERE id = ?`)
             .run(dep.amount, dep.amount, dep.user_id);
-          db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'topup_reversed', ?, ?)`)
+          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'topup_reversed', ?, ?)`)
             .run(dep.user_id, dep.amount, `Adicao de saldo #${id} revertida (active para ${status})`);
         }
       } else if (status === 'rejected') {
-        db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_rejected', ?, ?)`)
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_rejected', ?, ?)`)
           .run(dep.user_id, dep.amount, `Deposito #${id} rejeitado`);
       }
     });
-    apply();
-    return res.json(db.prepare('SELECT * FROM deposits WHERE id = ?').get(id));
+    await apply;
+    return res.json(await db.prepare('SELECT * FROM deposits WHERE id = ?').get(id));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao atualizar deposito.' });
   }
 });
 
-app.get('/api/admin/withdrawals', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/withdrawals', authRequired, adminRequired, async (req, res) => {
   try {
-    const rows = db
+    const rows = await db
       .prepare(`SELECT w.*, u.username, g.symbol AS gateway_symbol
                 FROM withdrawals w
                 LEFT JOIN users u ON u.id = w.user_id
@@ -923,7 +942,7 @@ app.get('/api/admin/withdrawals', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.put('/api/admin/withdrawals/:id', authRequired, adminRequired, (req, res) => {
+app.put('/api/admin/withdrawals/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     const { status } = req.body || {};
@@ -931,45 +950,45 @@ app.put('/api/admin/withdrawals/:id', authRequired, adminRequired, (req, res) =>
     if (!['pending', 'approved', 'rejected'].includes(status)) {
       return res.status(400).json({ error: 'Status invalido (pending/approved/rejected).' });
     }
-    const wd = db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id);
+    const wd = await db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id);
     if (!wd) return res.status(404).json({ error: 'Saque nao encontrado.' });
     if (wd.status === status) {
-      return res.json(db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id));
+      return res.json(await db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id));
     }
     if (wd.status !== 'pending') {
       return res.status(400).json({ error: 'Somente saques pendentes podem ser atualizados.' });
     }
-    const apply = db.transaction(() => {
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(wd.user_id);
+    const apply = db.transaction(async (tdb) => {
+      const user = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(wd.user_id);
       if (!user) throw new Error('user-missing');
       if (status === 'approved') {
         if ((user.pending_withdraw || 0) < wd.amount) throw new Error('pending-insuficiente');
         if ((user.balance || 0) < wd.amount) throw new Error('saldo-insuficiente');
-        db.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
-        db.prepare(`UPDATE users SET pending_withdraw = pending_withdraw - ?,
+        await tdb.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
+        await tdb.prepare(`UPDATE users SET pending_withdraw = pending_withdraw - ?,
                     balance = balance - ?, total_withdrawn = total_withdrawn + ? WHERE id = ?`)
           .run(wd.amount, wd.amount, wd.amount, wd.user_id);
-        db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'withdraw_approved', ?, ?)`)
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'withdraw_approved', ?, ?)`)
           .run(wd.user_id, wd.amount, `Saque #${id} aprovado`);
       } else if (status === 'rejected') {
-        db.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
-        db.prepare(`UPDATE users SET pending_withdraw = CASE WHEN pending_withdraw - ? < 0 THEN 0 ELSE pending_withdraw - ? END WHERE id = ?`)
+        await tdb.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
+        await tdb.prepare(`UPDATE users SET pending_withdraw = CASE WHEN pending_withdraw - ? < 0 THEN 0 ELSE pending_withdraw - ? END WHERE id = ?`)
           .run(wd.amount, wd.amount, wd.user_id);
-        db.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'withdraw_rejected', ?, ?)`)
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'withdraw_rejected', ?, ?)`)
           .run(wd.user_id, wd.amount, `Saque #${id} rejeitado (valor liberado)`);
       } else {
-        db.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
+        await tdb.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
       }
     });
     try {
-      apply();
+      await apply;
     } catch (e) {
       if (e.message === 'saldo-insuficiente' || e.message === 'pending-insuficiente') {
         return res.status(400).json({ error: 'Saldo/pendente insuficiente para aprovar.' });
       }
       throw e;
     }
-    return res.json(db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id));
+    return res.json(await db.prepare('SELECT * FROM withdrawals WHERE id = ?').get(id));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao atualizar saque.' });
@@ -1013,23 +1032,23 @@ function validatePlanBody(b) {
   return errors;
 }
 
-app.get('/api/admin/plans', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/plans', authRequired, adminRequired, async (req, res) => {
   try {
-    return res.json(db.prepare('SELECT * FROM plans ORDER BY id ASC').all());
+    return res.json(await db.prepare('SELECT * FROM plans ORDER BY id ASC').all());
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao listar planos.' });
   }
 });
 
-app.post('/api/admin/plans', authRequired, adminRequired, (req, res) => {
+app.post('/api/admin/plans', authRequired, adminRequired, async (req, res) => {
   try {
     const b = req.body || {};
     const errors = validatePlanBody(b);
     if (errors.length) return res.status(400).json({ error: errors.join('; ') });
     const totalReturn = Number(b.total_return_pct);
     const netProfit = Math.round((totalReturn - 100) * 10) / 10;
-    const info = db
+    const info = await db
       .prepare(`INSERT INTO plans (name, daily_rate, duration_days, min_deposit, max_deposit, total_return_pct, net_profit_pct, active)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
@@ -1042,18 +1061,18 @@ app.post('/api/admin/plans', authRequired, adminRequired, (req, res) => {
         netProfit,
         b.active === undefined ? 1 : Number(b.active) ? 1 : 0
       );
-    return res.status(201).json(db.prepare('SELECT * FROM plans WHERE id = ?').get(info.lastInsertRowid));
+    return res.status(201).json(await db.prepare('SELECT * FROM plans WHERE id = ?').get(info.lastInsertRowid));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao criar plano.' });
   }
 });
 
-app.put('/api/admin/plans/:id', authRequired, adminRequired, (req, res) => {
+app.put('/api/admin/plans/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID invalido.' });
-    const cur = db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
+    const cur = await db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
     if (!cur) return res.status(404).json({ error: 'Plano nao encontrado.' });
     const b = req.body || {};
     const merged = { ...cur, ...b };
@@ -1061,7 +1080,7 @@ app.put('/api/admin/plans/:id', authRequired, adminRequired, (req, res) => {
     if (errors.length) return res.status(400).json({ error: errors.join('; ') });
     const totalReturn = Number(merged.total_return_pct);
     const netProfit = Math.round((totalReturn - 100) * 10) / 10;
-    db.prepare(`UPDATE plans SET name=?, daily_rate=?, duration_days=?, min_deposit=?, max_deposit=?,
+    await db.prepare(`UPDATE plans SET name=?, daily_rate=?, duration_days=?, min_deposit=?, max_deposit=?,
                 total_return_pct=?, net_profit_pct=?, active=? WHERE id=?`)
       .run(
         String(merged.name).trim(),
@@ -1076,20 +1095,20 @@ app.put('/api/admin/plans/:id', authRequired, adminRequired, (req, res) => {
       );
     // Editar um plano nao toca em positions ja abertas: a taxa foi copiada
     // para a posicao no momento da ativacao.
-    return res.json(db.prepare('SELECT * FROM plans WHERE id = ?').get(id));
+    return res.json(await db.prepare('SELECT * FROM plans WHERE id = ?').get(id));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao atualizar plano.' });
   }
 });
 
-app.delete('/api/admin/plans/:id', authRequired, adminRequired, (req, res) => {
+app.delete('/api/admin/plans/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID invalido.' });
-    const open = db.prepare("SELECT COUNT(*) c FROM positions WHERE plan_id = ? AND status = 'active'").get(id).c;
-    if (open > 0) return res.status(409).json({ error: 'Plano tem ' + open + ' posicao(oes) ativa(s). Desabilite em vez de excluir.' });
-    const r = db.prepare('DELETE FROM plans WHERE id = ?').run(id);
+    const open = (await db.prepare("SELECT COUNT(*) c FROM positions WHERE plan_id = ? AND status = 'active'").get(id)).c;
+    if (Number(open) > 0) return res.status(409).json({ error: 'Plano tem ' + open + ' posicao(oes) ativa(s). Desabilite em vez de excluir.' });
+    const r = await db.prepare('DELETE FROM plans WHERE id = ?').run(id);
     if (r.changes === 0) return res.status(404).json({ error: 'Plano nao encontrado.' });
     return res.json({ ok: true });
   } catch (err) {
@@ -1107,21 +1126,21 @@ function validateGatewayBody(b) {
   return errors;
 }
 
-app.get('/api/admin/gateways', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/gateways', authRequired, adminRequired, async (req, res) => {
   try {
-    return res.json(db.prepare('SELECT * FROM gateways ORDER BY id ASC').all());
+    return res.json(await db.prepare('SELECT * FROM gateways ORDER BY id ASC').all());
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao listar gateways.' });
   }
 });
 
-app.post('/api/admin/gateways', authRequired, adminRequired, (req, res) => {
+app.post('/api/admin/gateways', authRequired, adminRequired, async (req, res) => {
   try {
     const b = req.body || {};
     const errors = validateGatewayBody(b);
     if (errors.length) return res.status(400).json({ error: errors.join('; ') });
-    const info = db
+    const info = await db
       .prepare('INSERT INTO gateways (symbol, name, network, wallet_address, active) VALUES (?, ?, ?, ?, ?)')
       .run(
         String(b.symbol).trim(),
@@ -1130,24 +1149,24 @@ app.post('/api/admin/gateways', authRequired, adminRequired, (req, res) => {
         String(b.wallet_address).trim(),
         b.active === undefined ? 1 : Number(b.active) ? 1 : 0
       );
-    return res.status(201).json(db.prepare('SELECT * FROM gateways WHERE id = ?').get(info.lastInsertRowid));
+    return res.status(201).json(await db.prepare('SELECT * FROM gateways WHERE id = ?').get(info.lastInsertRowid));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao criar gateway.' });
   }
 });
 
-app.put('/api/admin/gateways/:id', authRequired, adminRequired, (req, res) => {
+app.put('/api/admin/gateways/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID invalido.' });
-    const cur = db.prepare('SELECT * FROM gateways WHERE id = ?').get(id);
+    const cur = await db.prepare('SELECT * FROM gateways WHERE id = ?').get(id);
     if (!cur) return res.status(404).json({ error: 'Gateway nao encontrado.' });
     const b = req.body || {};
     const merged = { ...cur, ...b };
     const errors = validateGatewayBody(merged);
     if (errors.length) return res.status(400).json({ error: errors.join('; ') });
-    db.prepare('UPDATE gateways SET symbol=?, name=?, network=?, wallet_address=?, active=? WHERE id=?')
+    await db.prepare('UPDATE gateways SET symbol=?, name=?, network=?, wallet_address=?, active=? WHERE id=?')
       .run(
         String(merged.symbol).trim(),
         String(merged.name).trim(),
@@ -1156,18 +1175,18 @@ app.put('/api/admin/gateways/:id', authRequired, adminRequired, (req, res) => {
         Number(merged.active) ? 1 : 0,
         id
       );
-    return res.json(db.prepare('SELECT * FROM gateways WHERE id = ?').get(id));
+    return res.json(await db.prepare('SELECT * FROM gateways WHERE id = ?').get(id));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao atualizar gateway.' });
   }
 });
 
-app.delete('/api/admin/gateways/:id', authRequired, adminRequired, (req, res) => {
+app.delete('/api/admin/gateways/:id', authRequired, adminRequired, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'ID invalido.' });
-    const r = db.prepare('DELETE FROM gateways WHERE id = ?').run(id);
+    const r = await db.prepare('DELETE FROM gateways WHERE id = ?').run(id);
     if (r.changes === 0) return res.status(404).json({ error: 'Gateway nao encontrado.' });
     return res.json({ ok: true });
   } catch (err) {
@@ -1176,32 +1195,32 @@ app.delete('/api/admin/gateways/:id', authRequired, adminRequired, (req, res) =>
   }
 });
 
-app.get('/api/admin/settings', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/settings', authRequired, adminRequired, async (req, res) => {
   try {
-    return res.json(getSettingsObject());
+    return res.json(await getSettingsObject());
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao carregar configuracoes.' });
   }
 });
 
-app.put('/api/admin/settings', authRequired, adminRequired, (req, res) => {
+app.put('/api/admin/settings', authRequired, adminRequired, async (req, res) => {
   try {
     const body = req.body || {};
     if (typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length === 0) {
       return res.status(400).json({ error: 'Envie um objeto {key: value}.' });
     }
-    const upsert = db.prepare(
-      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-    );
-    const t = db.transaction(() => {
+    const t = db.transaction(async (tdb) => {
+      const upsert = tdb.prepare(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+      );
       for (const [k, v] of Object.entries(body)) {
         if (!k || typeof k !== 'string') continue;
-        upsert.run(k.trim(), String(v));
+        await upsert.run(k.trim(), String(v));
       }
     });
-    t();
-    return res.json(getSettingsObject());
+    await t;
+    return res.json(await getSettingsObject());
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro ao salvar configuracoes.' });
@@ -1214,24 +1233,24 @@ app.put('/api/admin/settings', authRequired, adminRequired, (req, res) => {
 //   ativas ainda vao creditar ate o fim do contrato.
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-app.get('/api/admin/overview', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/overview', authRequired, adminRequired, async (req, res) => {
   try {
-    const pos = db.prepare(`
+    const pos = await db.prepare(`
       SELECT COUNT(*) AS positions_active,
              COALESCE(SUM(principal), 0) AS invested_active,
              COALESCE(SUM(principal * daily_rate / 100.0), 0) AS daily_yield
       FROM positions WHERE status = 'active'`).get();
-    const proj = db.prepare(`
+    const proj = await db.prepare(`
       SELECT COALESCE(SUM((duration_days - days_paid) * principal * daily_rate / 100.0), 0) AS pending
       FROM positions WHERE status = 'active' AND days_paid < duration_days`).get();
-    const gen = db.prepare('SELECT COALESCE(SUM(amount), 0) AS paid FROM accruals').get();
-    const us = db.prepare(`
+    const gen = await db.prepare('SELECT COALESCE(SUM(amount), 0) AS paid FROM accruals').get();
+    const us = await db.prepare(`
       SELECT COUNT(*) AS users_total,
              COALESCE(SUM(balance), 0) AS balance_total,
              COALESCE(SUM(pending_withdraw), 0) AS pending_withdraw,
              COALESCE(SUM(total_withdrawn), 0) AS total_withdrawn
       FROM users`).get();
-    const withPos = db.prepare("SELECT COUNT(DISTINCT user_id) AS c FROM positions WHERE status = 'active'").get();
+    const withPos = await db.prepare("SELECT COUNT(DISTINCT user_id) AS c FROM positions WHERE status = 'active'").get();
 
     const balanceTotal = r2(us.balance_total);
     const projected = r2(proj.pending);
@@ -1274,7 +1293,7 @@ function dailyCumulative(rows, dates) {
   return out;
 }
 
-app.get('/api/admin/evolution', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/evolution', authRequired, adminRequired, async (req, res) => {
   try {
     let days = parseInt(req.query.days, 10);
     if (!Number.isFinite(days) || days < 7) days = 7;
@@ -1285,10 +1304,10 @@ app.get('/api/admin/evolution', authRequired, adminRequired, (req, res) => {
     for (let t = Date.parse(from + 'T00:00:00Z'); t <= Date.parse(to + 'T00:00:00Z'); t += 86400000) {
       dates.push(new Date(t).toISOString().slice(0, 10));
     }
-    const dep = db.prepare("SELECT date(created_at) AS d, COALESCE(SUM(amount), 0) AS a FROM deposits WHERE status = 'active' GROUP BY d").all();
-    const acc = db.prepare('SELECT accrual_date AS d, COALESCE(SUM(amount), 0) AS a FROM accruals GROUP BY d').all();
-    const resu = db.prepare('SELECT result_date AS d, COALESCE(SUM(amount), 0) AS a FROM company_results GROUP BY d').all();
-    const settings = getSettingsObject();
+    const dep = await db.prepare("SELECT left(created_at, 10) AS d, COALESCE(SUM(amount), 0) AS a FROM deposits WHERE status = 'active' GROUP BY d").all();
+    const acc = await db.prepare('SELECT accrual_date AS d, COALESCE(SUM(amount), 0) AS a FROM accruals GROUP BY d').all();
+    const resu = await db.prepare('SELECT result_date AS d, COALESCE(SUM(amount), 0) AS a FROM company_results GROUP BY d').all();
+    const settings = await getSettingsObject();
     // Meta DINAMICA: cobre o lucro ja gerado aos usuarios e um extra para a
     // empresa (fator padrao 1.30 = lucro + 30%). Linha por dia, nao um valor fixo.
     const rawFactor = Number(settings.meta_factor);
@@ -1315,12 +1334,12 @@ app.get('/api/admin/evolution', authRequired, adminRequired, (req, res) => {
 });
 
 // Lancamento manual do resultado das APLICACOES da plataforma.
-app.get('/api/admin/results', authRequired, adminRequired, (req, res) => {
+app.get('/api/admin/results', authRequired, adminRequired, async (req, res) => {
   try {
-    const items = db.prepare(
+    const items = await db.prepare(
       'SELECT id, result_date, amount, note, created_at FROM company_results ORDER BY result_date DESC, id DESC LIMIT 200'
     ).all();
-    const settings = getSettingsObject();
+    const settings = await getSettingsObject();
     const raw = Number(settings.meta_factor);
     return res.json({ meta_factor: Number.isFinite(raw) && raw > 0 ? raw : 1.3, items });
   } catch (err) {
@@ -1329,7 +1348,7 @@ app.get('/api/admin/results', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.post('/api/admin/results', authRequired, adminRequired, (req, res) => {
+app.post('/api/admin/results', authRequired, adminRequired, async (req, res) => {
   try {
     const b = req.body || {};
     const date = String(b.result_date || '').trim();
@@ -1337,8 +1356,8 @@ app.post('/api/admin/results', authRequired, adminRequired, (req, res) => {
     const note = b.note == null ? null : String(b.note).trim().slice(0, 200) || null;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'result_date deve ser AAAA-MM-DD.' });
     if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Informe um valor maior que zero.' });
-    const info = db.prepare('INSERT INTO company_results (result_date, amount, note) VALUES (?, ?, ?)').run(date, r2(amount), note);
-    const row = db.prepare('SELECT id, result_date, amount, note, created_at FROM company_results WHERE id = ?').get(info.lastInsertRowid);
+    const info = await db.prepare('INSERT INTO company_results (result_date, amount, note) VALUES (?, ?, ?)').run(date, r2(amount), note);
+    const row = await db.prepare('SELECT id, result_date, amount, note, created_at FROM company_results WHERE id = ?').get(info.lastInsertRowid);
     return res.status(201).json(row);
   } catch (err) {
     console.error(err);
@@ -1346,9 +1365,9 @@ app.post('/api/admin/results', authRequired, adminRequired, (req, res) => {
   }
 });
 
-app.delete('/api/admin/results/:id', authRequired, adminRequired, (req, res) => {
+app.delete('/api/admin/results/:id', authRequired, adminRequired, async (req, res) => {
   try {
-    const info = db.prepare('DELETE FROM company_results WHERE id = ?').run(Number(req.params.id));
+    const info = await db.prepare('DELETE FROM company_results WHERE id = ?').run(Number(req.params.id));
     if (!info.changes) return res.status(404).json({ error: 'Lancamento nao encontrado.' });
     return res.json({ ok: true });
   } catch (err) {
@@ -1420,9 +1439,9 @@ app.get('/api/solana/portfolio', solLimiter, async (req, res) => {
 });
 
 // ---------- fallback ----------
-app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
+app.get('/api/health', async (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
   const indexFile = path.join(publicDir, 'index.html');
   if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
   return res.json({ ok: true, name: 'Nexora API', docs: '/api/health' });
@@ -1446,14 +1465,14 @@ const ACCRUAL_INTERVAL_MS = 60 * 60 * 1000;
 // Dispara o accrue manualmente — usado para testar sem esperar o dia virar.
 // onDate opcional avança o relógio do accrue (util para validar 30 dias de
 // plano em segundos).
-app.post('/api/admin/accrue/run', authRequired, adminRequired, (req, res) => {
+app.post('/api/admin/accrue/run', authRequired, adminRequired, async (req, res) => {
   try {
     const onDate = (req.body || {}).onDate;
     if (onDate && !/^\d{4}-\d{2}-\d{2}$/.test(String(onDate))) {
       return res.status(400).json({ error: 'onDate deve ser AAAA-MM-DD.' });
     }
-    const r = accrual.runAccruals(db, onDate ? { onDate: String(onDate) } : {});
-    return res.json({ ok: true, simulated: isSimulation(), ...r });
+    const r = await accrual.runAccruals(db, onDate ? { onDate: String(onDate) } : {});
+    return res.json({ ok: true, simulated: await isSimulation(), ...r });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Erro no accrue: ' + err.message });
@@ -1462,12 +1481,13 @@ app.post('/api/admin/accrue/run', authRequired, adminRequired, (req, res) => {
 
 // Catch-all DEPOIS de todas as rotas /api (registrava antes e deixava
 // POST /api/admin/accrue/run permanentemente em 404).
-app.use('/api', (req, res) => res.status(404).json({ error: 'Rota nao encontrada.' }));
+app.use('/api', async (req, res) => res.status(404).json({ error: 'Rota nao encontrada.' }));
 
 function scheduleAccruals() {
-  const tick = () => {
+  const tick = async () => {
     try {
-      const r = accrual.runAccruals(db);
+      await ensureDb();
+      const r = await accrual.runAccruals(db);
       if (r.credited > 0) {
         console.log('[accrue] ' + r.credited + ' dia(s) creditado(s), total ' + r.gross.toFixed(2));
       }
@@ -1482,12 +1502,21 @@ function scheduleAccruals() {
 }
 
 if (require.main === module) {
-  scheduleAccruals();
-  app.listen(PORT, () => {
-    console.log(`[nexora] API rodando na porta ${PORT}`);
-    console.log(`[nexora] DB: ${DB_PATH}`);
-    console.log(`[nexora] simulation_mode=${isSimulation() ? '1' : '0'}`);
-  });
+  (async () => {
+    try {
+      await ensureDb();
+      const sim = await isSimulation();
+      scheduleAccruals();
+      app.listen(PORT, () => {
+        console.log(`[nexora] API rodando na porta ${PORT}`);
+        console.log(`[nexora] DB: ${process.env.DATABASE_URL ? 'Supabase Postgres (DATABASE_URL)' : 'sem DATABASE_URL'}`);
+        console.log(`[nexora] simulation_mode=${sim ? '1' : '0'}`);
+      });
+    } catch (err) {
+      console.error('[nexora] falha ao iniciar:', err.message);
+      process.exit(1);
+    }
+  })();
 }
 
-module.exports = { app, db, scheduleAccruals, isSimulation };
+module.exports = { app, ensureDb, getDb, db, scheduleAccruals, isSimulation };

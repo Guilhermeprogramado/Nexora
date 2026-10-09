@@ -1,11 +1,16 @@
 {
   "name": "nexora-backend",
-  "version": "2.0.0",
-  "description": "Nexora dashboard backend — Express + SQLite + Solana Yield",
+  "version": "2.1.0",
+  "description": "Nexora dashboard backend — Express + Supabase Postgres + Solana Yield",
   "main": "server.js",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "start": "node server.js",
-    "init-db": "node init-db.js"
+    "init-db": "node init-db.js",
+    "create-demo": "node criar-demo.js",
+    "verificar": "node verificar.js"
   },
   "dependencies": {
     "@solana/spl-stake-pool": "^0.6.5",
@@ -15,6 +20,12 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.2.0",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.23.1"
+  },
+  "overrides": {
+    "rpc-websockets": {
+      "uuid": "^11.0.0"
+    }
   }
 }

@@ -1,17 +1,21 @@
 # Nexora — Plataforma de Investimento IA (clone funcional estilo Loxton, cores próprias)
 
-Plataforma completa inspirada na loxtoncapital.io, com identidade própria **Nexora** (verde `#10b981` + violeta `#8b5cf6` sobre dark `#0b0f14` — diferente do azul Loxton), livre de build-step e sem dependências nativas (usa `node:sqlite` nativo do Node 22+).
+Plataforma completa inspirada na loxtoncapital.io, com identidade própria **Nexora** (verde `#10b981` + violeta `#8b5cf6` sobre dark `#0b0f14` — diferente do azul Loxton), livre de build-step. O backend roda em Express e o banco é **Postgres no Supabase** via `pg` (connection string em `DATABASE_URL`) — arquitetura serverless-friendly para a Vercel.
 
 `Nexora.html` original foi preservado como estudo de UI.
 
-## Como rodar (Windows)
+## Como rodar (local)
 
-Pré-requisito: **Node.js 22+** (testado no Node 24).
+Pré-requisito: **Node.js 22+** e um banco Postgres no Supabase.
+
+Antes de rodar, exporte a connection string do Supabase (projeto → Settings → Database → Connection string / Pooler):
 
 ```powershell
-cd "C:\Users\willi\Desktop\Nexora dashboard"
+$env:DATABASE_URL = "postgresql://postgres:SUA_SENHA@db.xxxxxxxxxxxxxxxxxxxx.supabase.co:5432/postgres"
+cd "C:\Users\Willis\Desktop\Nexora dask\Nexora dask"
 npm install
-npm run init-db
+npm run init-db     # garante schema + seeds (idempotente; nunca apaga dados)
+node criar-demo.js  # cria o usuario demo, se nao existir
 npm start
 ```
 
@@ -22,6 +26,8 @@ Abra: **http://localhost:3000/**
 - Dashboard usuário: `/dashboard.html` (views `#dashboard #deposit #withdraw #history #deposits #referrals #security #settings`)
 - Admin: `/admin.html`
 
+> **Reset total**: `node init-db.js --reset` apaga todas as tabelas e recria schema + seeds (admin, planos, gateways) do zero.
+
 ### Credenciais padrão (seed)
 
 | Tipo | Login | Senha |
@@ -30,9 +36,21 @@ Abra: **http://localhost:3000/**
 | Usuário demo | `demo` ou `demo@nexora.local` | `Demo123!` |
 
 - O admin entra pela tela de login do próprio `/admin.html` (usa `POST /api/auth/login` e valida `is_admin`).
-- O usuário demo já vem com saldo $1.250,50 e depósito ativo $1.000 para testar o dashboard.
-- Após `npm run init-db` o banco volta ao zero (admin + planos + gateways); recrie o demo com `node criar-demo.js`.
+- O usuário demo nasce **zerado**; o rendimento dele é o que estiver na carteira, lido em `/yield.html`.
 - Também é possível criar contas novas pela página `/signup.html`.
+
+## Deploy na Vercel + Supabase
+
+1. Crie o projeto no Supabase e copie a **connection string** (Password mode). Defina-a como variável de ambiente no dashboard da Vercel:
+   - `DATABASE_URL` = `postgresql://postgres:...@db.<projeto>.supabase.co:5432/postgres`
+   - `PGSSL=disable` apenas se usar o Supabase local via CLI (na Vercel fica omitido — SSL on).
+   - `JWT_SECRET` = valor aleatório (obrigatório em produção).
+   - `CMC_API_KEY` = (opcional) chave da CoinMarketCap.
+2. Push para o GitHub e **Import Project** na Vercel (framework: Other, build: nada, output: nada).
+3. O `vercel.json` redireciona tudo para `api/index.js` (Function Node 22, `maxDuration 30`), que exporta o mesmo `app` do `server.js`. O banco é SP completo, então não há escrita em disco.
+4. `engines` força Node 22.x e `overrides.rpc-websockets.uuid = ^11` elimina o `ERR_REQUIRE_ESM` (`@solana/web3.js` → `rpc-websockets` exigia `uuid@14` ESM-only).
+
+> Nota: a senha do banco **não** é a publishable key `sb_publishable_...` — ela serve apenas para autenticação no client Supabase, não para a connection string do `pg`.
 
 ## O que foi entregue
 
@@ -63,7 +81,8 @@ Admin (Bearer+is_admin): `GET|PUT /api/admin/users`, `GET|PUT /api/admin/deposit
 ## Estrutura
 
 ```
-├── server.js  solana.js  accrual.js  db.js  init-db.js  criar-demo.js  package.json  nexora.db
+├── server.js  solana.js  accrual.js  db.js  init-db.js  criar-demo.js  vercel.json  package.json
+├── api/index.js
 ├── README.md
 └── public/
     ├── index.html yield.html login.html signup.html forgot.html admin-login.html
@@ -84,8 +103,9 @@ Se a RPC ou a API falhar, a resposta é `null`/503 e a tela mostra "indisponíve
 
 ## Notas técnicas
 
-- Banco `nexora.db` via `node:sqlite` (DatabaseSync) — sem Visual Studio / sem compilação. `db.js` adiciona shim `pragma` + `transaction` para compatibilidade.
+- Banco **Postgres no Supabase** via `node-postgres` (`pg`) — nada de SQLite local, nada de escrita em disco (essencial para a Vercel). `db.js` expõe uma API assíncrona parecida com a antiga (`prepare().get/all/run`, `exec`, `transaction`) e traduz `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING` e `?` → `$1, $2...`.
+- Configuração por ambiente: `DATABASE_URL` (obrigatória), `PGSSL=disable` (opcional), `PGPOOL_MAX` (default 5), `JWT_SECRET`, `CMC_API_KEY`.
 - Depósito aprovado = `active` (não `approved`). Saque aprovado = `approved`.
 - Para trocar cores/logo sem código: `/admin.html` → aba Config Site.
-- `npm run init-db` apaga e recria o banco com admin + **5 planos** (Nexora Start … Sovereign) + 2 gateways de demonstração.
+- `npm run init-db` garante schema + seeds (idempotente); `node init-db.js --reset` apaga tudo e recria com admin + **5 planos** (Nexora Start … Sovereign) + 2 gateways de demonstração.
 - Assinatura de transações on-chain **não está implementada**. O site apenas lê dados. Implementar depósito/resgate exige construir as transações no navegador, revisar taxas de prioridade e gas, e submeter a auditoria — não deve ser feito copiando exemplos de terceiros.

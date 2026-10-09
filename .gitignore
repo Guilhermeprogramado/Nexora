@@ -9,6 +9,7 @@ nexora.db-wal
 # Credenciais / dados locais
 login.json
 usuario.txt
+.env
 
 # Logs e temporários
 *.log
