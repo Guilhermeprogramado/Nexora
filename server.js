@@ -30,6 +30,26 @@ const app = express();
 // Test endpoint at very top (before any middleware)
 app.get('/api/ping', async (req, res) => res.json({ ok: true, time: Date.now() }));
 
+// Diagnostico rapido do banco (antes do middleware que devolve 500 generico).
+// Devolve SEMPRE 200 com ok:false em caso de erro, para o corpo ser legivel.
+app.get('/api/-/db-check', async (req, res) => {
+  try {
+    await ensureDb();
+    const row = await db.prepare('SELECT 1 AS ok').get();
+    let host = 'n/a';
+    const m = String(process.env.DATABASE_URL || '').match(/@([^/:]+)/);
+    if (m) host = m[1];
+    return res.json({ ok: true, env_set: !!process.env.DATABASE_URL, host, select: row.ok });
+  } catch (err) {
+    return res.json({
+      ok: false,
+      env_set: !!process.env.DATABASE_URL,
+      error: String(err && err.message || err),
+      first_lines: String(err && err.stack || '').split('\n').slice(0, 4).join(' | ')
+    });
+  }
+});
+
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 
@@ -40,7 +60,10 @@ app.use(async (req, res, next) => {
     next();
   } catch (err) {
     console.error('[db] falha ao inicializar:', err);
-    return res.status(500).json({ error: 'Falha ao inicializar o banco de dados.' });
+    return res.status(500).json({
+      error: 'Falha ao inicializar o banco de dados.',
+      detail: String(err && err.message || err)
+    });
   }
 });
 
