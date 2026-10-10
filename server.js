@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 3000;
 const CMC_API_KEY = process.env.CMC_API_KEY || '';
 const CMC_BASE_URL = 'https://pro-api.coinmarketcap.com/v1';
 const CMC_CACHE_TTL = 60000;
+const COINGECKO_API_KEY = process.env.COINGECKO_API_KEY || '';
 
 let cmcCache = { data: null, timestamp: 0 };
 
@@ -428,7 +429,10 @@ async function fetchCoinGeckoPrices() {
   try {
     const ids = Object.keys(COINGECKO_META).join(',');
     const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h`;
-    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    const headers = { Accept: 'application/json' };
+    // Chave demo da CoinGecko (opcional) -> limites de requisicao maiores.
+    if (COINGECKO_API_KEY) headers['x-cg-demo-api-key'] = COINGECKO_API_KEY;
+    const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`CoinGecko API error: ${response.status}`);
     const data = await response.json();
     if (!Array.isArray(data)) throw new Error('CoinGecko: resposta inesperada');

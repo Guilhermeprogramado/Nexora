@@ -106,7 +106,7 @@ Se a RPC ou a API falhar, a resposta é `null`/503 e a tela mostra "indisponíve
 ## Notas técnicas
 
 - Banco **Postgres no Supabase** via `node-postgres` (`pg`) — nada de SQLite local, nada de escrita em disco (essencial para a Vercel). `db.js` expõe uma API assíncrona parecida com a antiga (`prepare().get/all/run`, `exec`, `transaction`) e traduz `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING` e `?` → `$1, $2...`.
-- Configuração por ambiente: `DATABASE_URL` (obrigatória), `PGSSL=disable` (opcional), `PGPOOL_MAX` (default 5), `JWT_SECRET`, `CMC_API_KEY`, `CRON_SECRET` (protege `/api/cron/accrue`).
+- Configuração por ambiente: `DATABASE_URL` (obrigatória), `PGSSL=disable` (opcional), `PGPOOL_MAX` (default 5), `JWT_SECRET`, `CMC_API_KEY`, `COINGECKO_API_KEY` (chave demo — sobe o rate-limit), `CRON_SECRET` (protege `/api/cron/accrue`).
 - Depósito aprovado = `active` (não `approved`). Saque aprovado = `approved`.
 - Para trocar cores/logo sem código: `/admin.html` → aba Config Site.
 - `npm run init-db` garante schema + seeds (idempotente); `node init-db.js --reset` apaga tudo e recria com admin + **5 planos** (Nexora Start … Sovereign) + 2 gateways de demonstração.
