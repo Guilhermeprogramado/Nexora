@@ -157,12 +157,11 @@
   }
 
   /* ---------- rendimento ao vivo: um contador por plano + total no topo ----------
-     O motor de crédito (accrual.js) creditava 1x por dia. Entre um crédito e o
-     próximo este módulo interpola a fração do dia corrente para o número subir
-     de forma contínua — a sensação de "minerando". Regras:
-       1. o valor exibido NUNCA passa do que o servidor realmente vai creditar;
-       2. a cada sincronização o número volta exatamente para `positions.accrued`;
-       3. encerrado o período, o contador congela no total finalizado. */
+     O motor de crédito (accrual.js) credita 1x por dia. O contador mostra o valor
+     EXATO que o servidor já creditou — começa em $0 e só sobe a cada crédito
+     diário (discreto). O período de 24h começa no momento do investimento; a
+     barra e o "próximo crédito" acompanham a janela do dia, mas o valor em
+     dinheiro NUNCA antecipa o que ainda não foi creditado. */
   var DAY_MS = 86400000;
   var mine = { rows: [], simulated: false, key: null, models: [] };
 
@@ -183,7 +182,11 @@
   }
 
   function buildModel(p) {
-    var startedMs = Date.parse(String(p.started_on || '').slice(0, 10) + 'T00:00:00Z');
+    // Período de 24h ancorado no MOMENTO do investimento (created_at, que tem
+    // hora). Sem created_at cai no dia (meia-noite UTC) de started_on.
+    var rawStart = String(p.created_at || '').trim();
+    var startedMs = Date.parse(rawStart.replace(' ', 'T') + 'Z');
+    if (!isFinite(startedMs)) startedMs = Date.parse(String(p.started_on || '').slice(0, 10) + 'T00:00:00Z');
     if (!isFinite(startedMs)) startedMs = Date.now();
     var days = Math.max(1, parseInt(p.duration_days, 10) || 1);
     var paid = Math.min(days, Math.max(0, parseInt(p.days_paid, 10) || 0));
@@ -209,12 +212,10 @@
     };
   }
   function liveAccrued(m, now) {
-    if (m.closed) return m.accrued;
-    var maxCreditable = m.accrued + m.daily * (m.days - m.paid);
-    if (now <= m.dayStart) return m.accrued;
-    var frac = (now - m.dayStart) / Math.max(1, m.dayEnd - m.dayStart);
-    if (frac > 1) frac = 1;
-    return Math.min(maxCreditable, m.accrued + m.daily * frac);
+    // Discreto: sempre o valor exato já creditado pelo banco. Nada de pro-rata
+    // do dia corrente — o usuário vê $0 até o primeiro crédito de 24h.
+    void now;
+    return m.accrued;
   }
 
   function counterHTML(m) {
@@ -225,7 +226,7 @@
       '<div class="mine-meta">' + money(m.principal) + ' · ' + String(m.rate).replace('.', ',') +
         '% ao dia · ' + m.days + ' dia(s)</div>' +
       '<div class="mine-amount" data-role="amount">' + moneyLive(m.accrued) + '</div>' +
-      '<div class="mine-amount-lbl">rendimento acumulado' + (m.closed ? ' (creditado)' : ' (ao vivo)') + '</div>' +
+      '<div class="mine-amount-lbl">rendimento acumulado' + '</div>' +
       '<div class="mine-bar"><i data-role="bar" style="width:0%"></i></div>' +
       '<div class="mine-foot"><span data-role="days">' + m.paid + '/' + m.days + ' dias</span>' +
         '<span data-role="eta"></span></div>' +
@@ -241,12 +242,12 @@
       ? 'Modo simulação — taxa de configuração, crédito só no banco local'
       : 'Crédito diário automático por plano · atualiza sozinho';
 
-    // Ativos primeiro; concluídos (encerrados no período) ficam visíveis ao final.
-    var rows = mine.rows.slice().sort(function (a, b) {
-      var ac = a.status === 'closed' ? 1 : 0, bc = b.status === 'closed' ? 1 : 0;
-      if (ac !== bc) return ac - bc;
-      return Number(b.id) - Number(a.id);
-    });
+    // Somente posições ATIVAS aparecem. Concluída (principal liberado/retirado),
+    // a posição sai do dashboard — fica só no histórico de créditos/transações.
+    var rows = mine.rows
+      .filter(function (p) { return p.status !== 'closed'; })
+      .slice()
+      .sort(function (a, b) { return Number(b.id) - Number(a.id); });
 
     if (!rows.length) {
       mine.key = 'empty';
@@ -274,9 +275,9 @@
 
     var note = $('mineNote');
     if (note) {
-      note.textContent = 'Contador ao vivo: cresce entre um crédito e o próximo e volta ao ' +
-        'valor exato do banco a cada sincronização (20s). Ao fim do período o contador congela ' +
-        'no total creditado e o saldo já fica atualizado no cartão acima.';
+      note.textContent = 'O rendimento começa em $0 e sobe a cada crédito diário ' +
+        '(período de 24h a partir do investimento). O valor mostrado é sempre o que já ' +
+        'foi creditado pelo banco — nada de projeção antecipada. Posições concluídas saem deste painel.';
     }
     tickMine();
   }
