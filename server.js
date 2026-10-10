@@ -487,11 +487,17 @@ app.get('/api/me', authRequired, async (req, res) => {
   try {
     const out = sanitizeUser(req.user);
     out.simulated = await isSimulation();
-    // Saca so quem ja investiu em um plano. O flag viaja na resposta para a
-    // UI mostrar o bloqueio antes do usuario preencher o formulario.
+    // Saca so apos TODO o saldo depositado passar por um plano (ciclo completo).
     out.has_investment = !!(await db
       .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
       .get(req.user.id));
+    const deposited = Number(out.total_deposited) || 0;
+    const released = Number(out.invested_released) || 0;
+    out.withdraw_unlocked = out.has_investment && released >= deposited - 1e-9;
+    out.withdrawable = out.withdraw_unlocked
+      ? Math.max(0, (Number(out.balance) || 0) - (Number(out.pending_withdraw) || 0))
+      : 0;
+    out.released_principal = released;
     return res.json(out);
   } catch (err) {
     console.error(err);
@@ -759,15 +765,25 @@ app.post('/api/my/withdrawals', authRequired, async (req, res) => {
     if (amt > available) {
       return res.status(400).json({ error: 'Saldo insuficiente.' });
     }
-    // Regra do produto: so saca quem ja investiu em um plano. Sem posicao
-    // (aberta ou encerrada) nao ha origem de rendimento para resgatar.
-    const invested = await db
+    // Regra do produto: o saque so fica liberado depois que TODO o saldo
+    // depositado ja passou por um plano (ciclo completo -> invested_released)
+    // e o usuario tem ao menos uma posicao (origem de rendimento).
+    const hasAnyPos = await db
       .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
       .get(req.user.id);
-    if (!invested) {
+    const deposited = Number(fresh.total_deposited) || 0;
+    const released = Number(fresh.invested_released) || 0;
+    const unlocked = !!hasAnyPos && released >= deposited - 1e-9;
+    if (!unlocked) {
+      const faltam = Math.max(0, deposited - released);
       return res.status(403).json({
-        error: 'Saque liberado apos investir em um plano. Invista primeiro em "Investir em Plano".'
+        error: 'Saque bloqueado. Todo o saldo depositado precisa concluir um investimento em plano para liberar.' +
+          (faltam > 0 ? ` Falta investir/concluir: USD ${accrual.round2(faltam)}.` : '')
       });
+    }
+    const withdrawable = Math.max(0, fresh.balance - (fresh.pending_withdraw || 0));
+    if (amt > withdrawable) {
+      return res.status(400).json({ error: 'Saldo liberado insuficiente para saque.' });
     }
     const doTx = db.transaction(async (tdb) => {
       const info = await tdb
@@ -948,8 +964,8 @@ const apply = db.transaction(async (tdb) => {
         // Deposito aprovado = SALDO liberado. O investimento no plano e feito
         // depois pelo usuario em /api/my/invest (automatico). A aprovacao aqui
         // NUNCA abre posicao nem marca active_deposit.
-        await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
-          .run(dep.amount, dep.user_id);
+        await tdb.prepare('UPDATE users SET balance = balance + ?, total_deposited = total_deposited + ? WHERE id = ?')
+          .run(dep.amount, dep.amount, dep.user_id);
         await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
           .run(dep.user_id, dep.amount, dep.plan_id
             ? `Deposito #${id} aprovado — saldo liberado para investir`
@@ -1000,6 +1016,10 @@ const apply = db.transaction(async (tdb) => {
           await tdb.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END WHERE id = ?')
             .run(dep.amount, dep.amount, dep.user_id);
         }
+        // Como o deposito deixa de contar como aprovado, o 100% liberado
+        // ("todo depositado passou por investimento") volta a exigir este valor.
+        await tdb.prepare('UPDATE users SET total_deposited = CASE WHEN total_deposited - ? < 0 THEN 0 ELSE total_deposited - ? END WHERE id = ?')
+          .run(dep.amount, dep.amount, dep.user_id);
         await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_reversed', ?, ?)`)
           .run(dep.user_id, dep.amount, `Deposito #${id} movido de active para ${status}`);
       } else if (status === 'rejected') {

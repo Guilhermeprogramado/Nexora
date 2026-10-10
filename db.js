@@ -182,6 +182,8 @@ CREATE TABLE IF NOT EXISTS users (
   active_deposit DOUBLE PRECISION NOT NULL DEFAULT 0,
   total_withdrawn DOUBLE PRECISION NOT NULL DEFAULT 0,
   pending_withdraw DOUBLE PRECISION NOT NULL DEFAULT 0,
+  total_deposited DOUBLE PRECISION NOT NULL DEFAULT 0,
+  invested_released DOUBLE PRECISION NOT NULL DEFAULT 0,
   referral_code TEXT UNIQUE,
   referred_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
   affiliate_rate DOUBLE PRECISION NOT NULL DEFAULT 10,
@@ -294,6 +296,14 @@ for (const chunk of SCHEMA_SQL.split('CREATE TABLE').slice(1)) {
 
 async function initDatabase(db) {
   await db.exec(SCHEMA_SQL);
+
+  // Migracao idempotente para bancos criados antes destas colunas.
+  for (const [table, col, type] of [
+    ['users', 'total_deposited', 'DOUBLE PRECISION NOT NULL DEFAULT 0'],
+    ['users', 'invested_released', 'DOUBLE PRECISION NOT NULL DEFAULT 0']
+  ]) {
+    await db.exec(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${col} ${type}`);
+  }
 
   // Settings defaults (insert if missing)
   const setSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING');

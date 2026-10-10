@@ -148,6 +148,19 @@ async function runAccruals(db, opts = {}) {
 
       if (newPaid !== paid || newAccrued !== Number(pos.accrued)) {
         const finished = newPaid >= total;
+        if (finished) {
+          // Ciclo completo: o principal volta do active_deposit para o saldo
+          // como "liberado p/ saque" (invested_released). Só os lucros diários
+          // já creditados e este retorno é que ficam disponíveis ao usuário.
+          await tdb.prepare(`UPDATE users SET
+              active_deposit = CASE WHEN active_deposit - ? < 0 THEN 0 ELSE active_deposit - ? END,
+              balance = balance + ?,
+              invested_released = invested_released + ?
+            WHERE id = ?`)
+            .run(pos.principal, pos.principal, pos.principal, pos.principal, pos.user_id);
+          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'principal_return', ?, ?)`)
+            .run(pos.user_id, pos.principal, pos.plan_name + ' concluido - principal liberado para saque');
+        }
         await tdb.prepare(`UPDATE positions SET days_paid = ?, accrued = ?, status = ?, closed_at = ? WHERE id = ?`)
           .run(newPaid, newAccrued, finished ? 'closed' : 'active', finished ? onDate : null, pos.id);
         touched.push({ id: pos.id, user_id: pos.user_id, days_paid: newPaid, accrued: newAccrued, finished });

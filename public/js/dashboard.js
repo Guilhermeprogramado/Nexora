@@ -145,7 +145,7 @@
   window.addEventListener('hashchange', function () { render(currentRoute()); });
 
   /* ---------- state ---------- */
-  var state = { me: null, plans: [], gateways: [], positions: [], available: 0, hasInvestment: null };
+  var state = { me: null, plans: [], gateways: [], positions: [], available: 0, balance: 0, withdrawUnlocked: false, hasInvestment: null };
 
   /* O servidor devolve objetos ({ simulated, positions }) e não listas.
      Aceitar as duas formas evita painel vazio quando a API muda. */
@@ -391,8 +391,15 @@
 
       var bal = Number(pick(u, ['available_balance', 'balance', 'availableBalance', 'available'], 0)) || 0;
       var pend = Number(pick(u, ['pending_withdraw', 'pendingWithdraw', 'pending'], 0)) || 0;
-      var avail = Math.max(0, bal - pend);
-      state.available = avail;
+      state.balance = bal;
+
+      // Saque: liberado só quando TODO o saldo depositado concluiu um plano.
+      // O backend manda `withdrawable` (0 enquanto bloqueado) e `withdraw_unlocked`.
+      var wu = pick(u, ['withdraw_unlocked', 'withdrawUnlocked'], false);
+      if (wu === undefined || wu === null) state.withdrawUnlocked = false;
+      else state.withdrawUnlocked = wu === true || wu === 1 || wu === '1';
+      var wdAvail = Number(pick(u, ['withdrawable', 'withdrawAvailable'], 0)) || 0;
+      state.available = Math.max(0, wdAvail);
 
       // Regra: só saca quem já investiu em algum plano (tem posição no banco).
       var hi = u.has_investment;
@@ -413,37 +420,36 @@
     }
   }
 
-  /* Saldos nas telas "Investir em Plano" e "Sacar" + regra do produto:
-     só é possível sacar depois de ter investido em algum plano (o servidor
-     rejeita com 403; aqui a tela só avisa antes). */
+  // Saque: liberado so quando TODO o saldo depositado concluiu um investimento
+  // em plano (o backend valida e manda withdrawable/withdraw_unlocked).
   function paintBalances() {
     var avail = Number(state.available) || 0;
-    var has = state.hasInvestment;
-    var ok = has === true;
+    var ok = state.withdrawUnlocked === true;
 
     var ia = $('invAvailable');
-    if (ia) ia.textContent = money(avail);
+    if (ia) ia.textContent = money(state.balance || 0);
     var iw = $('invWithdrawable');
     if (iw) iw.textContent = money(avail);
     var iws = $('invWithdrawSub');
     if (iws) iws.textContent = ok
-      ? 'liberado — você já investiu em um plano'
-      : 'liberado após investir em um plano';
+      ? 'liberado — todo o saldo depositado concluiu investimento'
+      : 'libera após TODO o saldo depositado concluir um investimento';
 
     var wa = $('wdAvailable');
     if (wa) wa.textContent = money(avail);
     var wr = $('wdRule');
     if (wr) {
-      wr.textContent = has === null ? 'verificando…' : (ok ? 'Liberado' : 'Bloqueado');
-      wr.className = has === null ? '' : (ok ? 'ok' : 'no');
+      wr.textContent = ok ? 'Liberado' : 'Bloqueado';
+      wr.className = ok ? 'ok' : 'no';
     }
     var wrs = $('wdRuleSub');
-    if (wrs) wrs.textContent = has === null ? 'aguardando dados da conta'
-      : (ok ? 'plano investido' : 'nenhum plano investido ainda');
+    if (wrs) wrs.textContent = ok
+      ? 'todo o saldo depositado passou por investimento'
+      : 'há saldo depositado que ainda não concluiu um investimento';
     var wrn = $('wdRuleNote');
     if (wrn) wrn.textContent = ok
-      ? 'Saque liberado: você já investiu em um plano. Máximo disponível: ' + money(avail) + '.'
-      : 'Saque bloqueado até você investir em um plano — a regra também é validada no servidor.';
+      ? 'Saque liberado. Máximo disponível: ' + money(avail) + '.'
+      : 'Saque bloqueado até TODO o saldo depositado concluir um investimento em plano — a regra também é validada no servidor.';
 
     var btn = $('wdSubmit');
     if (btn) btn.disabled = (has === false);
@@ -790,8 +796,8 @@
           toast('Valor fora da faixa do plano (' + money(cur.min_deposit) + ' — ' + money(cur.max_deposit) + ').', 'error');
           return;
         }
-        if (amount > (Number(state.available) || 0)) {
-          toast('Saldo insuficiente (disponível: ' + money(state.available) + '). Faça um depósito em "Adicionar Saldo" primeiro.', 'error');
+        if (amount > (Number(state.balance) || 0)) {
+          toast('Saldo insuficiente (disponível: ' + money(state.balance) + '). Faça um depósito em "Adicionar Saldo" primeiro.', 'error');
           return;
         }
         if (btn) btn.disabled = true;
@@ -843,11 +849,11 @@
       var gateway = $('wdGateway') && $('wdGateway').value;
       var wallet = $('wdWallet') && $('wdWallet').value.trim();
         if (!isFinite(amount) || amount <= 0 || !gateway || !wallet) { toast('Preencha valor, gateway e carteira.', 'error'); return; }
-        if (state.hasInvestment === false) {
-          toast('Saque liberado somente após investir em um plano.', 'error');
+        if (state.withdrawUnlocked !== true) {
+          toast('Saque bloqueado até todo o saldo depositado concluir um investimento em plano.', 'error');
           return;
         }
-        if (amount > state.available) { toast('Saldo insuficiente (disponível: ' + money(state.available) + ').', 'error'); return; }
+        if (amount > state.available) { toast('Saldo liberado insuficiente (disponível: ' + money(state.available) + ').', 'error'); return; }
       if (btn) btn.disabled = true;
       try {
         await api('/api/my/withdrawals', { method: 'POST', body: { amount: amount, gateway_id: gateway, gateway: gateway, wallet_to: wallet, wallet: wallet } });
