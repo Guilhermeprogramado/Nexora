@@ -62,23 +62,23 @@ Abra: **http://localhost:3000/**
 
 **Auth** — signup com `?ref=` (o campo continua aceitando o parâmetro, mas **não paga comissão**), login por username ou email, JWT 7 dias em `localStorage nexora_token`.
 
-**Dashboard usuário** — sidebar (Dashboard, Fazer Depósito, Sacar, Histórico, Meus Depósitos, Referral, Segurança, Config, Sair), **contadores de rendimento ao vivo no topo** (um por plano + total capital+rendimento, interpolado 1x/s entre os créditos diários e ressincronizado com o banco a cada 20s; congela quando o período do investimento encerra), 4 cards (Available Balance, Total Earnings, Active Deposit, Total Withdrawn + Pending), affiliate link com copiar, depósito (plano+valor+gateway+tx_hash → status `pending`), saque (valida saldo, reserva `pending_withdraw`), histórico, referral list, trocar senha, editar email. Mobile com hamburger + drawer.
+**Dashboard usuário** — sidebar (Dashboard, Investir em Plano, Adicionar Saldo, Sacar, Histórico, Meus Depósitos, Referral, Segurança, Config, Sair), **contadores de rendimento ao vivo no topo** (um por plano + total capital+rendimento, interpolado 1x/s entre os créditos diários e ressincronizado com o banco a cada 20s; congela quando o período do investimento encerra), 4 cards (Available Balance, Total Earnings, Active Deposit, Total Withdrawn + Pending), affiliate link com copiar. Fluxo de 2 passos: **(1) Adicionar Saldo** — gateway + valor + hash da transferência → depósito `pending`, obriga aprovação do admin, um pendente por vez; **(2) Investir em Plano** — automático: debita o saldo na hora, abre a posição e o rendimento começa a contar a partir de hoje (sem aprovação). Saque (valida saldo, reserva `pending_withdraw`), histórico, referral list, trocar senha, editar email. Mobile com hamburger + drawer.
 
 **Admin** — guarda `is_admin=1`:
 
 - **Visão Geral** — cards de apoio + **Caixa e exposição (ao vivo)**: capital em posição, gerado para os usuários, **a pagar (caixa a guardar = saldo já creditado + o que as posições ativas ainda vão creditar)**, saldo dos usuários, geração diária e total de usuários — números agregados de todos os usuários, atualizados a cada 15s com contador interpolado. Abaixo, **Evolução da empresa** (capital investido × rendimento gerado, acumulado, 7/30/90/365 dias) e **Cenário** (lucro gerado aos usuários × resultado aplicado pela empresa × **meta dinâmica**, calculada dia a dia como `lucro gerado × fator`, padrão **1,30 = cobre o lucro dos usuários + 30% para a empresa** — fator editável em `settings.meta_factor`; resultados são lançados manualmente na tabela `company_results`). Gráficos são SVG próprio, sem biblioteca.
-- **Usuários** (editar balance/earnings/active/is_admin), **Depósitos** (aprovar=`active`/rejeitar — credita `active_deposit`), **Saques** (aprovar=`approved` debita saldo / rejeitar libera reserva), **Planos** CRUD, **Gateways** CRUD (carteiras), **Config Site** (`site_name, hero_title, support_telegram, primary_color, secondary_color` com live preview).
+- **Usuários** (editar balance/earnings/active/is_admin), **Depósitos** (aprovar=`active`/rejeitar — credita **saldo**; não abre posição), **Saques** (aprovar=`approved` debita saldo / rejeitar libera reserva), **Planos** CRUD, **Gateways** CRUD (carteiras), **Config Site** (`site_name, hero_title, support_telegram, primary_color, secondary_color` com live preview).
 
-> **O usuário não "investe" pelo painel.** `POST /api/my/invest` responde `410`: a rota debitava saldo interno e marcava `active_deposit` contra uma linha de `plans`, sem nenhuma transferência on-chain que pagasse aquilo. O CRUD de **planos continua no admin** — ele apenas define as taxas do motor de crédito local (`accrual.js`), e depósito/saque continuam sendo **saldos internos**. Rendimento real só é lido de `/api/solana/*` e assinado na própria carteira via `/yield.html`.
+> **Investir vs. Depositar.** Deposit (1x por vez, `pending`) é o único passo que exige aprovação do admin: aprovar credita `balance`. Investir num plano (`POST /api/my/invest`) é **automático** — debita `balance`, soma em `active_deposit` e abre a posição, que o `accrual.js` credita dia a dia a partir da data de hoje. O CRUD de **planos** no admin apenas define as taxas do motor de crédito local; depósito/saque são saldos internos. Rendimento real on-chain só é lido de `/api/solana/*` e assinado na própria carteira via `/yield.html`.
 
 ## API (resumo)
 
 Público: `POST /api/auth/signup|login`, `GET /api/public/settings|gateways|stats`, `GET /api/crypto/prices`, `GET /api/health`
 Solana: `GET /api/solana/jito`, `GET /api/solana/usdt-vaults`, `GET /api/solana/portfolio?address=<pubkey>`
-Usuário (Bearer): `GET|PUT /api/me`, `POST /api/me/change-password`, `GET|POST /api/my/deposits|withdrawals`, `GET /api/my/transactions|referrals`
+Usuário (Bearer): `GET|PUT /api/me`, `POST /api/me/change-password`, `GET|POST /api/my/deposits`, `POST /api/my/invest`, `GET|POST /api/my/withdrawals`, `GET /api/my/transactions|referrals`
 Admin (Bearer+is_admin): `GET|PUT /api/admin/users`, `GET|PUT /api/admin/deposits|withdrawals`, CRUD `/api/admin/plans|gateways`, `GET|PUT /api/admin/settings`, `GET /api/admin/overview` (agregados de caixa/exposição), `GET /api/admin/evolution?days=7|30|90|365`, `GET|POST /api/admin/results`, `DELETE /api/admin/results/:id`, `POST /api/admin/accrue/run`
 
-`GET /api/public/plans` devolve os planos ativos e `POST /api/my/invest` responde `410` — o convite é operar on-chain pelo `/yield.html`, não simular stake no banco.
+`GET /api/public/plans` devolve os planos ativos. `POST /api/my/invest` debita `balance` e abre a posição automaticamente (sem aprovação); `POST /api/my/deposits` cria um depósito `pending` (um por vez) que o admin aprova para liberar saldo.
 
 ## Estrutura
 
@@ -106,7 +106,7 @@ Se a RPC ou a API falhar, a resposta é `null`/503 e a tela mostra "indisponíve
 ## Notas técnicas
 
 - Banco **Postgres no Supabase** via `node-postgres` (`pg`) — nada de SQLite local, nada de escrita em disco (essencial para a Vercel). `db.js` expõe uma API assíncrona parecida com a antiga (`prepare().get/all/run`, `exec`, `transaction`) e traduz `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING` e `?` → `$1, $2...`.
-- Configuração por ambiente: `DATABASE_URL` (obrigatória), `PGSSL=disable` (opcional), `PGPOOL_MAX` (default 5), `JWT_SECRET`, `CMC_API_KEY`.
+- Configuração por ambiente: `DATABASE_URL` (obrigatória), `PGSSL=disable` (opcional), `PGPOOL_MAX` (default 5), `JWT_SECRET`, `CMC_API_KEY`, `CRON_SECRET` (protege `/api/cron/accrue`).
 - Depósito aprovado = `active` (não `approved`). Saque aprovado = `approved`.
 - Para trocar cores/logo sem código: `/admin.html` → aba Config Site.
 - `npm run init-db` garante schema + seeds (idempotente); `node init-db.js --reset` apaga tudo e recria com admin + **5 planos** (Nexora Start … Sovereign) + 2 gateways de demonstração.

@@ -459,7 +459,9 @@
   }
   function rowTx(t) {
     var type = String(pick(t, ['type', 'kind'], 'deposit')).toLowerCase();
-    var label = type.indexOf('with') >= 0 ? '<span class="pill sell">Saque</span>' : '<span class="pill buy">Depósito</span>';
+    var label = type.indexOf('with') >= 0 ? '<span class="pill sell">Saque</span>'
+      : type.indexOf('invest') >= 0 ? '<span class="pill buy">Investimento</span>'
+      : '<span class="pill buy">Depósito</span>';
     return '<tr><td>' + label + '</td><td>' + money(pick(t, ['amount', 'value'], 0)) + '</td>' +
       '<td>' + statusPill(pick(t, ['status'], 'pending')) + '</td><td class="muted">' + fmtDate(pick(t, ['created_at', 'createdAt', 'date'], '')) + '</td></tr>';
   }
@@ -537,7 +539,7 @@
   /* ---------- planos & gateways ---------- */
   // Planos vêm do servidor com a taxa de configuração. A tela diz, no
   // mínimo e no máximo de cada plano, o mesmo número que o servidor usa —
-  // fora da faixa, o servidor rejeita o depósito (POST /api/my/deposits).
+  // fora da faixa, o servidor rejeita o investimento (POST /api/my/invest).
   function paintPlanHint() {
     var sel = $('depPlan'), panel = $('depPlanHint');
     if (!sel || !panel) return;
@@ -768,38 +770,39 @@
 
   /* ---------- forms ---------- */
   function bindForms() {
-    /* Depósito em plano: cria um depósito PENDENTE em /api/my/deposits.
-       A posição (e o crédito diário) só nasce quando o admin valida. Nada é
-       debitado do saldo interno aqui. */
+    /* Investir em plano: AUTOMÁTICO via /api/my/invest. Debitamos o saldo do
+       usuário na hora e abrimos a posição (o rendimento começa hoje). Nenhuma
+       aprovação de admin aqui — o depósito (1x) que espera aprovação está na
+       tela "Adicionar Saldo". */
     var df = $('depositForm');
     if (df) {
       var dpl = $('depPlan');
       if (dpl) dpl.addEventListener('change', paintPlanHint);
-      var dgw = $('depGateway');
-      if (dgw) dgw.addEventListener('change', paintGatewayInfo);
       df.addEventListener('submit', async function (e) {
         e.preventDefault();
         var btn = $('depSubmit');
         var plan = dpl && dpl.value;
         var amount = $('depAmount') && Number($('depAmount').value);
-        var gateway = dgw && dgw.value;
         if (!plan) { toast('Escolha um plano.', 'error'); return; }
         if (!isFinite(amount) || amount <= 0) { toast('Informe o valor.', 'error'); return; }
-        if (!gateway) { toast('Escolha a moeda/rede.', 'error'); return; }
         var cur = state.plans.filter(function (p) { return String(p.id) === String(plan); })[0];
         if (cur && (amount < Number(cur.min_deposit) || amount > Number(cur.max_deposit))) {
           toast('Valor fora da faixa do plano (' + money(cur.min_deposit) + ' — ' + money(cur.max_deposit) + ').', 'error');
           return;
         }
+        if (amount > (Number(state.available) || 0)) {
+          toast('Saldo insuficiente (disponível: ' + money(state.available) + '). Faça um depósito em "Adicionar Saldo" primeiro.', 'error');
+          return;
+        }
         if (btn) btn.disabled = true;
         try {
-          var body = { plan_id: plan, amount: amount, gateway_id: gateway };
-          await api('/api/my/deposits', { method: 'POST', body: body });
-          toast('Investimento enviado! A posição começa após a validação no admin.', 'success');
+          var body = { plan_id: plan, amount: amount };
+          await api('/api/my/invest', { method: 'POST', body: body });
+          toast('Investimento realizado! O rendimento começa a contar hoje.', 'success');
           df.reset();
           paintPlanHint();
           await loadPlans();
-          await loadDeposits();
+          await loadPositions();
           loadMe();
         } catch (err) { toast('Erro: ' + err.message, 'error'); }
         finally { if (btn) btn.disabled = false; }

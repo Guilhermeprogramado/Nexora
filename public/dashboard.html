@@ -196,15 +196,14 @@
           </div>
         </div>
         <p class="desc">
-          Escolha o plano e o valor. O dep&#243;sito fica <b>pendente</b> at&#233; a valida&#231;&#227;o no painel
-          administrativo; s&#243; depois disso a posi&#231;&#227;o come&#231;a a creditar rendimento di&#225;rio.
+          Escolha o plano e o valor do seu <b>saldo</b>. O investimento &#233; <b>autom&#225;tico</b>:
+          o valor &#233; debitado do saldo na hora e o rendimento come&#231;a a contar hoje.
+          Sem saldo? Primeiro fa&#231;a um dep&#243;sito em <b>Adicionar Saldo</b> e aguarde a valida&#231;&#227;o no admin.
         </p>
         <form class="form" id="depositForm" style="max-width:none">
           <div><label for="depPlan">Plano</label><select id="depPlan" required><option value="">Carregando planos&hellip;</option></select></div>
           <div id="depPlanHint"></div>
           <div><label for="depAmount">Valor (USD)</label><input id="depAmount" type="number" min="1" step="0.01" placeholder="100.00" required/></div>
-          <div><label for="depGateway">Moeda / Rede</label><select id="depGateway" required><option value="">Carregando redes&hellip;</option></select></div>
-<div class="gateway-address" id="gatewayInfo" hidden style="margin-top:12px"></div>
            <div><button class="btn btn-primary" type="submit" id="depSubmit">Investir no plano</button></div>
         </form>
       </div>

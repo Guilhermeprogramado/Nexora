@@ -403,12 +403,69 @@ function normalizeCMCData(data) {
   return results;
 }
 
+// Fallback publico (sem API key) para quando CMC_API_KEY nao esta configurada.
+// Uso dados reais da CoinGecko -- nunca preco inventado.
+const COINGECKO_META = {
+  bitcoin: { symbol: 'BTC', name: 'Bitcoin', color: '#f7931a' },
+  ethereum: { symbol: 'ETH', name: 'Ethereum', color: '#627eea' },
+  solana: { symbol: 'SOL', name: 'Solana', color: '#9945ff' },
+  ripple: { symbol: 'XRP', name: 'Ripple', color: '#25a4e8' },
+  'bitcoin-cash': { symbol: 'BCH', name: 'Bitcoin Cash', color: '#8dc351' },
+  binancecoin: { symbol: 'BNB', name: 'BNB', color: '#f3ba2f' },
+  litecoin: { symbol: 'LTC', name: 'Litecoin', color: '#bfbbbb' },
+  dogecoin: { symbol: 'DOGE', name: 'Dogecoin', color: '#c2a633' },
+  tron: { symbol: 'TRX', name: 'Tron', color: '#ff060a' },
+  tether: { symbol: 'USDT', name: 'Tether', color: '#26a17b' }
+};
+const COINGECKO_CACHE_TTL = 60000;
+let geckoCache = { data: null, timestamp: 0 };
+
+async function fetchCoinGeckoPrices() {
+  const now = Date.now();
+  if (geckoCache.data && (now - geckoCache.timestamp) < COINGECKO_CACHE_TTL) {
+    return geckoCache.data;
+  }
+  try {
+    const ids = Object.keys(COINGECKO_META).join(',');
+    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h`;
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`CoinGecko API error: ${response.status}`);
+    const data = await response.json();
+    if (!Array.isArray(data)) throw new Error('CoinGecko: resposta inesperada');
+    const prices = data.map((coin) => {
+      const meta = COINGECKO_META[coin.id] || {};
+      return {
+        symbol: meta.symbol || String(coin.symbol || '').toUpperCase(),
+        name: meta.name || coin.name,
+        price: coin.current_price,
+        change24h: coin.price_change_percentage_24h,
+        color: meta.color || '#8b5cf6',
+        logo: coin.image,
+        updated_at: new Date().toISOString()
+      };
+    });
+    geckoCache = { data: prices, timestamp: now };
+    return prices;
+  } catch (err) {
+    console.error('CoinGecko API error:', err.message);
+    return null;
+  }
+}
+
 app.get('/api/crypto/prices', async (req, res) => {
   try {
-    const cmcData = await fetchCMCData();
-    const prices = cmcData ? normalizeCMCData(cmcData) : null;
+    let prices = null;
+    // CoinMarketCap quando ha chave; senao CoinGecko (sem chave).
+    if (CMC_API_KEY) {
+      const cmcData = await fetchCMCData();
+      prices = cmcData ? normalizeCMCData(cmcData) : null;
+    }
+    if ((!prices || !prices.length)) {
+      const gecko = await fetchCoinGeckoPrices();
+      if (gecko && gecko.length) prices = gecko;
+    }
 
-    // Sem API key / sem resposta, devolvemos lista vazia em vez de preco inventado.
+    // Sem nenhuma fonte, devolvemos lista vazia em vez de preco inventado.
     // O front exibe "preco indisponivel" -- nunca um numero fixo com variação aleatoria.
     return res.json({
       prices: prices || [],
@@ -571,6 +628,16 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
+    // Um deposito pendente por vez: evita a criacao acidental de linhas
+    // duplicadas enquanto o admin nao aprova o primeiro.
+    const pend = await db
+      .prepare("SELECT id FROM deposits WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1")
+      .get(req.user.id);
+    if (pend) {
+      return res.status(400).json({
+        error: `Voce ja tem um deposito (#${pend.id}) aguardando aprovacao. Aguarde a validacao no admin.`
+      });
+    }
     const tx = tx_hash ? String(tx_hash).trim().slice(0, 200) : null;
     if (!plan && !tx) {
       return res.status(400).json({ error: 'Informe o hash da transferência para validação do saldo.' });
@@ -593,20 +660,58 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
   }
 });
 
-// "Investir" em um plano foi removido.
-//
-// O endpoint debitava o saldo interno do usuário e marcava o valor como
-// "active_deposit" contra uma linha de `plans` — sem nenhuma transferência on-chain
-// e sem nenhum contrato que pagasse rendimento. Era um número se movendo no banco.
-//
-// Rendimento real exige assinar a transação na própria carteira, direto no
-// protocolo. Até isso existir, a rota recusa explicitamente em vez de simular.
+// Investir em um plano: AUTOMATICO, sem aprovacao do admin.
+// Fluxo do produto: deposito (1x) e aprovado pelo admin -> vira SALDO.
+// Depois o usuario investe o saldo num plano aqui; debitamos o saldo na hora
+// e abrimos a posicao (que o accrue.js credita dia a dia, a partir de hoje).
 app.post('/api/my/invest', authRequired, async (req, res) => {
-  return res.status(410).json({
-    error:
-      'Investimento em plano nao existe mais. A Nexora nao opera planos nem recebe deposito. ' +
-      'Para rendimento real, use o painel on-chain (/yield.html) e assine a transacao no Jito ou na Kamino com sua carteira.'
-  });
+  try {
+    const body = req.body || {};
+    const planId = parseInt(body.plan_id, 10);
+    const amt = toNum(body.amount);
+    if (!Number.isInteger(planId) || planId <= 0) {
+      return res.status(400).json({ error: 'Plano invalido.' });
+    }
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'Valor invalido.' });
+    }
+    const plan = await db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
+    if (!plan || !plan.active) {
+      return res.status(400).json({ error: 'Plano indisponivel.' });
+    }
+    if (amt < plan.min_deposit || amt > plan.max_deposit) {
+      return res.status(400).json({
+        error: `Valor deve estar entre ${plan.min_deposit} e ${plan.max_deposit}.`
+      });
+    }
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(404).json({ error: 'Usuario nao encontrado.' });
+    if (toNum(user.balance) < amt) {
+      return res.status(400).json({ error: 'Saldo insuficiente. Adicione saldo para investir.' });
+    }
+
+    let position = null;
+    const apply = db.transaction(async (tdb) => {
+      await tdb.prepare('UPDATE users SET balance = balance - ?, active_deposit = active_deposit + ? WHERE id = ?')
+        .run(amt, amt, req.user.id);
+      await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'invest', ?, ?)`)
+        .run(req.user.id, amt, `Investimento no plano ${plan.name}`);
+      position = await accrual.openPosition(tdb, {
+        userId: req.user.id,
+        depositId: null,
+        planId: plan.id,
+        principal: amt,
+        rate: plan.daily_rate,
+        durationDays: plan.duration_days,
+        planName: plan.name
+      });
+    });
+    await apply;
+    return res.status(201).json({ ok: true, position });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Erro ao investir no plano.' });
+  }
 });
 
 app.get('/api/my/withdrawals', authRequired, async (req, res) => {
@@ -836,41 +941,15 @@ const apply = db.transaction(async (tdb) => {
       const user = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
       if (!user) return;
       if (prev !== 'active' && status === 'active') {
-        if (dep.plan_id) {
-          await tdb.prepare('UPDATE users SET active_deposit = active_deposit + ? WHERE id = ?')
-            .run(dep.amount, dep.user_id);
-          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
-            .run(dep.user_id, dep.amount, `Deposito #${id} ativado`);
-          // Abre a posicao: e ela que o accrue.js credita todo dia.
-          // A taxa e a duracao sao copiadas daqui, entao editar o plano depois
-          // nao muda o que ja foi prometido a quem investiu.
-          const plan = await tdb.prepare('SELECT * FROM plans WHERE id = ?').get(dep.plan_id);
-          if (plan) {
-            try {
-              await accrual.openPosition(tdb, {
-                userId: dep.user_id,
-                depositId: id,
-                planId: plan.id,
-                principal: dep.amount,
-                rate: plan.daily_rate,
-                durationDays: plan.duration_days,
-                planName: plan.name
-              });
-            } catch (e) {
-              // Falha ao abrir posicao nao pode perder o deposito aprovado:
-              // reverte tudo para o estado anterior.
-              throw new Error('Falha ao abrir posicao: ' + e.message);
-            }
-          } else {
-            console.warn('[deposit #' + id + '] plan_id ' + dep.plan_id + ' nao existe; sem accrue.');
-          }
-        } else {
-          // Top-up (sem plano): hash validado -> credita SALDO (não depósito ativo)
-          await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
-            .run(dep.amount, dep.user_id);
-          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'topup_approved', ?, ?)`)
-            .run(dep.user_id, dep.amount, `Adicao de saldo #${id} validada (hash confirmado)`);
-        }
+        // Deposito aprovado = SALDO liberado. O investimento no plano e feito
+        // depois pelo usuario em /api/my/invest (automatico). A aprovacao aqui
+        // NUNCA abre posicao nem marca active_deposit.
+        await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
+          .run(dep.amount, dep.user_id);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
+          .run(dep.user_id, dep.amount, dep.plan_id
+            ? `Deposito #${id} aprovado — saldo liberado para investir`
+            : `Adicao de saldo #${id} validada (hash confirmado)`);
 
         // Comissão de afiliado: 5% do PRIMEIRO depósito do usuário indicado
         // Só paga se o usuário foi indicado (referred_by) e este é seu primeiro depósito aprovado
@@ -891,31 +970,34 @@ const apply = db.transaction(async (tdb) => {
             }
           }
         }
-      } else if (prev === 'active' && status !== 'active') {
-        if (dep.plan_id) {
+} else if (prev === 'active' && status !== 'active') {
+        // Reverter um deposito aprovado devolve o principal. Posicoes legadas
+        // (modelo antigo, deposit_id preenchido) sao fechadas e o rendimento
+        // acumulado e estornado.
+        const open = await tdb.prepare("SELECT * FROM positions WHERE deposit_id = ? AND status = 'active'").all(id);
+        let legacy = false;
+        for (const pos of open) {
+          legacy = true;
+          const paid = (await tdb.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM accruals WHERE position_id = ?').get(pos.id)).s;
+          if (Number(paid) > 0) {
+            await tdb.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END, total_earnings = CASE WHEN total_earnings - ? < 0 THEN 0 ELSE total_earnings - ? END WHERE id = ?')
+              .run(paid, paid, paid, paid, dep.user_id);
+            await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'accrual_reversal', ?, ?)`)
+              .run(dep.user_id, -paid, 'Rendimento estornado — deposito #' + id + ' revertido');
+          }
+          await tdb.prepare("UPDATE positions SET status = 'closed', closed_at = to_char(now(), 'YYYY-MM-DD') WHERE id = ?").run(pos.id);
+        }
+        if (legacy) {
+          // Modelo antigo: o principal estava em active_deposit (nao em balance).
           await tdb.prepare(`UPDATE users SET active_deposit = CASE WHEN active_deposit - ? < 0 THEN 0 ELSE active_deposit - ? END WHERE id = ?`)
             .run(dep.amount, dep.amount, dep.user_id);
-          // Fecha a posicao e estorna o que ja foi creditado: reverter um
-          // deposito ativo sem reverter o accumulate deixaria lucro orfao.
-          const open = await tdb.prepare("SELECT * FROM positions WHERE deposit_id = ? AND status = 'active'").all(id);
-          for (const pos of open) {
-            const paid = (await tdb.prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM accruals WHERE position_id = ?').get(pos.id)).s;
-            if (Number(paid) > 0) {
-              await tdb.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END, total_earnings = CASE WHEN total_earnings - ? < 0 THEN 0 ELSE total_earnings - ? END WHERE id = ?')
-                .run(paid, paid, paid, paid, dep.user_id);
-              await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'accrual_reversal', ?, ?)`)
-                .run(dep.user_id, -paid, 'Rendimento (SIMULADO) estornado — deposito #' + id + ' revertido');
-            }
-            await tdb.prepare("UPDATE positions SET status = 'closed', closed_at = to_char(now(), 'YYYY-MM-DD') WHERE id = ?").run(pos.id);
-          }
-          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_reversed', ?, ?)`)
-            .run(dep.user_id, dep.amount, `Deposito #${id} movido de active para ${status}`);
         } else {
-          await tdb.prepare(`UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END WHERE id = ?`)
+          // Modelo atual: depósito aprovado creditou SALDO.
+          await tdb.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END WHERE id = ?')
             .run(dep.amount, dep.amount, dep.user_id);
-          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'topup_reversed', ?, ?)`)
-            .run(dep.user_id, dep.amount, `Adicao de saldo #${id} revertida (active para ${status})`);
         }
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_reversed', ?, ?)`)
+          .run(dep.user_id, dep.amount, `Deposito #${id} movido de active para ${status}`);
       } else if (status === 'rejected') {
         await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_rejected', ?, ?)`)
           .run(dep.user_id, dep.amount, `Deposito #${id} rejeitado`);
