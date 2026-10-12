@@ -493,7 +493,8 @@ app.get('/api/me', authRequired, async (req, res) => {
       .get(req.user.id));
     const deposited = Number(out.total_deposited) || 0;
     const released = Number(out.invested_released) || 0;
-    out.withdraw_unlocked = out.has_investment && released >= deposited - 1e-9;
+    const withdrawn = Number(out.total_withdrawn) || 0;
+    out.withdraw_unlocked = out.has_investment && (deposited - withdrawn - released) <= 1e-9;
     out.withdrawable = out.withdraw_unlocked
       ? Math.max(0, (Number(out.balance) || 0) - (Number(out.pending_withdraw) || 0))
       : 0;
@@ -768,14 +769,18 @@ app.post('/api/my/withdrawals', authRequired, async (req, res) => {
     // Regra do produto: o saque so fica liberado depois que TODO o saldo
     // depositado ja passou por um plano (ciclo completo -> invested_released)
     // e o usuario tem ao menos uma posicao (origem de rendimento).
+    // Dinheiro ja sacado (total_withdrawn) saiu do sistema e nao precisa
+    // voltar a ciclar.
     const hasAnyPos = await db
       .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
       .get(req.user.id);
     const deposited = Number(fresh.total_deposited) || 0;
     const released = Number(fresh.invested_released) || 0;
-    const unlocked = !!hasAnyPos && released >= deposited - 1e-9;
+    const withdrawn = Number(fresh.total_withdrawn) || 0;
+    const needsCycle = deposited - withdrawn - released;
+    const unlocked = !!hasAnyPos && needsCycle <= 1e-9;
     if (!unlocked) {
-      const faltam = Math.max(0, deposited - released);
+      const faltam = Math.max(0, needsCycle);
       return res.status(403).json({
         error: 'Saque bloqueado. Todo o saldo depositado precisa concluir um investimento em plano para liberar.' +
           (faltam > 0 ? ` Falta investir/concluir: USD ${accrual.round2(faltam)}.` : '')
