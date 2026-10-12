@@ -429,6 +429,13 @@
 
     var ia = $('invAvailable');
     if (ia) ia.textContent = money(state.balance || 0);
+    var act = state.me ? (Number(state.me.active_deposit) || 0) : 0;
+    var ias = $('invAvailableSub');
+    if (ias) {
+      ias.textContent = (Number(state.balance) || 0) <= 0 && act > 0
+        ? 'Seu saldo está aplicado no plano ativo (US$ ' + money(act) + ') e volta ao fim do ciclo.'
+        : 'descontando saques pendentes';
+    }
     var iw = $('invWithdrawable');
     if (iw) iw.textContent = money(avail);
     var iws = $('invWithdrawSub');

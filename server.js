@@ -510,6 +510,10 @@ app.get('/api/me', authRequired, async (req, res) => {
 // UI rotular cada valor.
 app.get('/api/my/positions', authRequired, async (req, res) => {
   try {
+    // Catch-up idempotente: credita dias vencidos que o cron pode ter perdido,
+    // para o dashboard nunca mostrar posicao parada no tempo (ex: plano que
+    // deveria ter fechado no dia anterior).
+    try { await accrual.runAccruals(db); } catch (e) { console.error('[accrue catch-up]', e.message); }
     const rows = await db.prepare('SELECT * FROM positions WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
     const sim = await isSimulation();
     return res.json({
