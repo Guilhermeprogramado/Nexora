@@ -39,6 +39,39 @@ function round2(v) {
 }
 
 /**
+ * Momento do investimento em ms (epoch UTC). Usa `created_at` da posicao
+ * (tem hora), caindo para started_on (meia-noite UTC) se ausente.
+ */
+function createdAtMs(pos) {
+  const raw = String((pos && pos.created_at) || '').trim();
+  let ms = Date.parse(raw.replace(' ', 'T') + 'Z');
+  if (Number.isFinite(ms)) return ms;
+  ms = Date.parse(dateKey(pos && pos.started_on) + 'T00:00:00Z');
+  return Number.isFinite(ms) ? ms : NaN;
+}
+
+/**
+ * Dias inteiros de 24h decorridos desde o investimento (cada dia começa no
+ * horario exato do investimento). Ex: investido 17:44 -> dia 1 conclui 17:44
+ * do dia seguinte. `onDate` pode ser 'YYYY-MM-DD' (vira meia-noite UTC) ou
+ * timestamp completo 'YYYY-MM-DD HH:MM:SS' / ISO; sem argumento usa AGORA.
+ */
+function elapsedDays(pos, onDate) {
+  const from = createdAtMs(pos);
+  const raw = String(onDate && String(onDate).trim() !== '' ? onDate : new Date().toISOString());
+  let to = 0;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    to = Date.parse(dateKey(raw) + 'T00:00:00Z');
+  } else {
+    to = Date.parse(String(raw).replace(' ', 'T') + (/Z$/.test(raw) ? '' : 'Z'));
+  }
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return daysBetween(pos.started_on, onDate || new Date().toISOString());
+  }
+  return Math.floor((to - from) / 86400000);
+}
+
+/**
  * Abre uma posicao para um deposito aprovado.
  * `db` pode ser o adapter principal ou uma transacao (passar `tdb`).
  */
@@ -64,7 +97,7 @@ function projectPosition(pos, onDate) {
   const rate = Number(pos.daily_rate) || 0;
   const days = parseInt(pos.duration_days, 10) || 0;
   const paid = Number(pos.days_paid) || 0;
-  const elapsed = daysBetween(pos.started_on, onDate || todayStr());
+  const elapsed = elapsedDays(pos, onDate);
   const earnedDays = Math.max(0, Math.min(days, Math.max(elapsed, paid)));
   const daily = round2(Number(pos.principal) * (rate / 100));
   return {
@@ -96,8 +129,8 @@ async function runAccruals(db, opts = {}) {
       const paid = Number(pos.days_paid) || 0;
       const daily = round2(Number(pos.principal) * (rate / 100));
 
-      // Dia 0 nao paga: started_on e o dia de abertura.
-      let elapsed = daysBetween(pos.started_on, onDate);
+      // Cada dia paga em janelas de 24h a partir do momento do investimento.
+      let elapsed = elapsedDays(pos, onDate);
       let due = elapsed - paid;
       if (!(due > 0)) continue;
 

@@ -156,12 +156,12 @@
     return [];
   }
 
-  /* ---------- rendimento ao vivo: um contador por plano + total no topo ----------
-     O motor de crédito (accrual.js) credita 1x por dia. O contador mostra o valor
-     EXATO que o servidor já creditou — começa em $0 e só sobe a cada crédito
-     diário (discreto). O período de 24h começa no momento do investimento; a
-     barra e o "próximo crédito" acompanham a janela do dia, mas o valor em
-     dinheiro NUNCA antecipa o que ainda não foi creditado. */
+  /* ---------- rendimento por plano + total no topo ----------
+     Janelas de 24h ancoradas no MOMENTO do investimento (created_at). O valor
+     começa em $0 ao investir e sobe suavemente até o crédito diário exato às
+     24h (e assim a cada 24h). O teto é sempre o que o servidor vai creditar
+     (accrual.js credita nas mesmas janelas de 24h) — nunca antecipa o fim de
+     um ciclo. Concluídas são removidas do painel. */
   var DAY_MS = 86400000;
   var mine = { rows: [], simulated: false, key: null, models: [] };
 
@@ -212,10 +212,12 @@
     };
   }
   function liveAccrued(m, now) {
-    // Discreto: sempre o valor exato já creditado pelo banco. Nada de pro-rata
-    // do dia corrente — o usuário vê $0 até o primeiro crédito de 24h.
-    void now;
-    return m.accrued;
+    if (m.closed) return m.accrued;
+    var maxCreditable = m.accrued + m.daily * (m.days - m.paid);
+    if (now <= m.dayStart) return m.accrued;
+    var frac = (now - m.dayStart) / Math.max(1, m.dayEnd - m.dayStart);
+    if (frac > 1) frac = 1;
+    return Math.min(maxCreditable, m.accrued + m.daily * frac);
   }
 
   function counterHTML(m) {
@@ -275,9 +277,7 @@
 
     var note = $('mineNote');
     if (note) {
-      note.textContent = 'O rendimento começa em $0 e sobe a cada crédito diário ' +
-        '(período de 24h a partir do investimento). O valor mostrado é sempre o que já ' +
-        'foi creditado pelo banco — nada de projeção antecipada. Posições concluídas saem deste painel.';
+      note.textContent = 'O rendimento começa em $0 no momento do investimento e sobe até o crédito de 24h exato (gravado pelo banco). Valor jamais passa do teto do próximo crédito. Posições concluídas saem deste painel.';
     }
     tickMine();
   }
