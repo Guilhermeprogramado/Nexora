@@ -453,7 +453,7 @@
       : 'Saque bloqueado até TODO o saldo depositado concluir um investimento em plano — a regra também é validada no servidor.';
 
     var btn = $('wdSubmit');
-    if (btn) btn.disabled = (has === false);
+    if (btn) btn.disabled = (ok === false);
   }
 
 
