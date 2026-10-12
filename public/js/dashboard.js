@@ -145,7 +145,7 @@
   window.addEventListener('hashchange', function () { render(currentRoute()); });
 
   /* ---------- state ---------- */
-  var state = { me: null, plans: [], gateways: [], positions: [], available: 0, balance: 0, withdrawUnlocked: false, hasInvestment: null };
+  var state = { me: null, plans: [], gateways: [], positions: [], available: 0, balance: 0, withdrawUnlocked: false, hasInvestment: null, wallet: null };
 
   /* O servidor devolve objetos ({ simulated, positions }) e não listas.
      Aceitar as duas formas evita painel vazio quando a API muda. */
@@ -407,6 +407,18 @@
       if (hi === undefined || hi === null) state.hasInvestment = state.positions.length > 0;
       else state.hasInvestment = hi === true || hi === 1 || hi === '1';
       paintBalances();
+      // Sincroniza a carteira persistida no servidor (fonte da verdade) com o
+      // localStorage para a UI refletir a auto-aprovação de depósito.
+      var srvWallet = String(pick(u, ['wallet_address'], '') || '').trim();
+      if (srvWallet) {
+        var wc = String(pick(u, ['wallet_chain'], '') || '').toLowerCase();
+        var ex = getWallet();
+        var wtype = ex && ex.type ? ex.type : (wc === 'evm' ? 'MetaMask/EVM' : 'Solana');
+        try { localStorage.setItem('nexora_wallet', JSON.stringify({ type: wtype, address: srvWallet })); } catch (e) {}
+      } else {
+        try { localStorage.removeItem('nexora_wallet'); } catch (e) {}
+      }
+      paintWallet();
       if (code) {
         var link = 'https://site/?ref=' + code;
         var r1 = $('refLink'); if (r1) r1.value = link;
@@ -628,14 +640,14 @@
   function walletHint(net) {
     var n = String(net || '').toUpperCase();
     if (n.indexOf('SOL') >= 0 || n.indexOf('SPL') >= 0) return 'Use a Phantom (Solana) para enviar nesta rede.';
-    if (n.indexOf('BEP20') >= 0 || n.indexOf('ERC20') >= 0 || n.indexOf('ETH') >= 0 || n.indexOf('BNB') >= 0 || n.indexOf('POLYGON') >= 0 || n.indexOf('ARBITRUM') >= 0 || n.indexOf('EVM') >= 0) return 'Use MetaMask ou Coinbase Wallet para enviar nesta rede.';
+    if (n.indexOf('BEP20') >= 0 || n.indexOf('ERC20') >= 0 || n.indexOf('ETH') >= 0 || n.indexOf('BNB') >= 0 || n.indexOf('POLYGON') >= 0 || n.indexOf('ARBITRUM') >= 0 || n.indexOf('EVM') >= 0) return 'Use a MetaMask para enviar nesta rede.';
     if (n.indexOf('TRC20') >= 0 || n.indexOf('TRX') >= 0) return 'Use TronLink ou o app da sua corretora (rede Tron).';
     return 'Envie pelo app oficial da moeda, sempre na rede indicada acima.';
   }
   var WALLET_INSTALL = {
     metamask: { name: 'MetaMask', url: 'https://metamask.io/download/' },
     phantom: { name: 'Phantom', url: 'https://phantom.app/download' },
-    coinbase: { name: 'Coinbase Wallet', url: 'https://www.coinbase.com/wallet/downloads' }
+    solflare: { name: 'Solflare', url: 'https://solflare.com/downloads' }
   };
   var walletRetryKey = null;
   function walletKind(net) {
@@ -653,19 +665,19 @@
   function paintWalletRecommend() {
     var rec = $('walletRecommend');
     var g = selectedGateway();
-    var bm = $('btnMetaMask'), bp = $('btnPhantom'), bc = $('btnCoinbase');
-    [bm, bp, bc].forEach(function (b) { if (b) b.classList.remove('recommended'); });
+    var bm = $('btnMetaMask'), bp = $('btnPhantom'), bs = $('btnSolflare');
+    [bm, bp, bs].forEach(function (b) { if (b) b.classList.remove('recommended'); });
     document.querySelectorAll('.wallet-btn .rec-tag').forEach(function (t) { t.hidden = true; });
     if (!g) { if (rec) rec.textContent = 'Selecione um ativo acima para ver a carteira recomendada.'; return; }
     var kind = walletKind(g.network);
     var label = esc(g.symbol || '') + ' na rede ' + esc(g.network || '');
     function mark(btn) { if (!btn) return; btn.classList.add('recommended'); var t = btn.querySelector('.rec-tag'); if (t) t.hidden = false; }
     if (kind === 'evm') {
-      mark(bm); mark(bc);
-      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>MetaMask</b> ou <b>Coinbase Wallet</b> (destacadas). Clique para conectar.';
+      mark(bm);
+      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>MetaMask</b> (destacada). Clique para conectar.';
     } else if (kind === 'sol') {
-      mark(bp);
-      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>Phantom</b> (destacada). Clique para conectar.';
+      mark(bp); mark(bs);
+      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>Phantom</b> ou <b>Solflare</b> (destacadas). Clique para conectar.';
     } else {
       if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, envie pelo app oficial da moeda (ou corretora) e cole o hash no passo 3.';
     }
@@ -723,6 +735,9 @@
     try { return JSON.parse(localStorage.getItem('nexora_wallet') || 'null'); }
     catch (e) { return null; }
   }
+  function persistWalletServer(chain, address) {
+    return api('/api/auth/wallet', { method: 'POST', body: { chain: chain, address: address } }).catch(function () {});
+  }
   function saveWallet(type, address) {
     try { localStorage.setItem('nexora_wallet', JSON.stringify({ type: type, address: address })); } catch (e) {}
     paintWallet();
@@ -730,9 +745,17 @@
   function paintWallet() {
     var st = $('walletStatus'), dc = $('walletDisconnect');
     var w = getWallet();
-    if (st) st.innerHTML = w
-      ? ('Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) + '</span>')
-      : 'Nenhuma carteira conectada.';
+    var submit = $('topupSubmit');
+    var hash = $('topTxHash');
+    if (w) {
+      if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) + '</span> · <b style="color:var(--green,#10b981)">depósito com aprovação automática</b>';
+      if (hash) hash.required = false;
+      if (submit) submit.textContent = 'Depositar e creditar agora';
+    } else {
+      if (st) st.textContent = 'Nenhuma carteira conectada. Sem carteira, o depósito fica pendente até o hash ser validado pelo admin.';
+      if (hash) hash.required = true;
+      if (submit) submit.textContent = 'Enviar para validação';
+    }
     if (dc) dc.style.display = w ? '' : 'none';
   }
   async function connectEVM(provider, type) {
@@ -740,43 +763,61 @@
     try {
       var accs = await provider.request({ method: 'eth_requestAccounts' });
       if (!accs || !accs.length) throw new Error('nenhuma conta autorizada');
-      saveWallet(type, accs[0]);
-      toast(type + ' conectada!', 'success');
+      var address = String(accs[0]).trim();
+      await persistWalletServer('evm', address);
+      saveWallet(type, address);
+      toast(type + ' conectada! Depósito passa a ser aprovado automaticamente.', 'success');
     } catch (err) { toast('Falha ao conectar: ' + (err && err.message ? err.message : err), 'error'); }
+  }
+  function solanaProvider(key) {
+    var sol = window.solana;
+    if (key === 'phantom') {
+      if (window.phantom && window.phantom.solana && window.phantom.solana.isPhantom) return window.phantom.solana;
+      if (sol && sol.isPhantom) return sol;
+      return null;
+    }
+    if (key === 'solflare') {
+      if (window.solflare && window.solflare.isSolflare) return window.solflare;
+      if (sol && sol.isSolflare) return sol;
+      return null;
+    }
+    return null;
   }
   function connectWalletByKey(key) {
     hideWalletInstall();
     if (key === 'metamask') {
       if (!window.ethereum) { showWalletInstall('metamask'); return; }
       connectEVM(window.ethereum, 'MetaMask');
-    } else if (key === 'phantom') {
-      (async function () {
-        var sol = window.solana;
-        if (!sol || !sol.isPhantom) { showWalletInstall('phantom'); return; }
-        try {
-          var r = await sol.connect();
-          saveWallet('Phantom', String(r.publicKey));
-          toast('Phantom conectada!', 'success');
-        } catch (err) { toast('Falha ao conectar: ' + (err && err.message ? err.message : err), 'error'); }
-      })();
-    } else if (key === 'coinbase') {
-      var cp = window.coinbaseWalletExtension || window.ethereum;
-      if (!cp) { showWalletInstall('coinbase'); return; }
-      connectEVM(cp, 'Coinbase Wallet');
+      return;
     }
+    if (key !== 'phantom' && key !== 'solflare') return;
+    (async function () {
+      var provider = solanaProvider(key);
+      if (!provider) { showWalletInstall(key); return; }
+      try {
+        var r = await provider.connect();
+        var pkObj = r && (r.publicKey || r.address) ? (r.publicKey || r.address) : provider.publicKey;
+        var pk = pkObj ? (pkObj.toString ? pkObj.toString() : String(pkObj)) : '';
+        if (!pk) throw new Error('carteira não retornou o endereço');
+        await persistWalletServer('solana', pk);
+        saveWallet(key === 'phantom' ? 'Phantom' : 'Solflare', pk);
+        toast((key === 'phantom' ? 'Phantom' : 'Solflare') + ' conectada! Depósito passa a ser aprovado automaticamente.', 'success');
+      } catch (err) { toast('Falha ao conectar: ' + (err && err.message ? err.message : err), 'error'); }
+    })();
   }
   function bindWallet() {
     var bm = $('btnMetaMask');
     if (bm) bm.addEventListener('click', function () { connectWalletByKey('metamask'); });
     var bp = $('btnPhantom');
     if (bp) bp.addEventListener('click', function () { connectWalletByKey('phantom'); });
-    var bc = $('btnCoinbase');
-    if (bc) bc.addEventListener('click', function () { connectWalletByKey('coinbase'); });
+    var bs = $('btnSolflare');
+    if (bs) bs.addEventListener('click', function () { connectWalletByKey('solflare'); });
     var rt = $('walletInstallRetry');
     if (rt) rt.addEventListener('click', function () { if (walletRetryKey) connectWalletByKey(walletRetryKey); });
     var dc = $('walletDisconnect');
-    if (dc) dc.addEventListener('click', function () {
+    if (dc) dc.addEventListener('click', async function () {
       try { localStorage.removeItem('nexora_wallet'); } catch (e) {}
+      try { await api('/api/auth/wallet/disconnect', { method: 'POST', body: {} }); } catch (e) {}
       paintWallet();
       toast('Carteira desconectada.', 'success');
     });
@@ -838,12 +879,20 @@
       var gateway = $('topGateway') && $('topGateway').value;
       var amount = $('topAmount') && Number($('topAmount').value);
       var tx = $('topTxHash') && $('topTxHash').value.trim();
+      var w = getWallet();
       if (!gateway || !isFinite(amount) || amount <= 0) { toast('Escolha a moeda/rede e o valor.', 'error'); return; }
-      if (!tx || tx.length < 5) { toast('Cole o hash da transferência para validação.', 'error'); return; }
+      if (!w && (!tx || tx.length < 5)) { toast('Sem carteira conectada, cole o hash da transferência para validação.', 'error'); return; }
       if (btn) btn.disabled = true;
       try {
-        await api('/api/my/deposits', { method: 'POST', body: { amount: amount, gateway_id: gateway, tx_hash: tx } });
-        toast('Hash enviado! Saldo creditado após validação.', 'success');
+        var body = { amount: amount, gateway_id: gateway };
+        if (tx) body.tx_hash = tx;
+        await api('/api/my/deposits', { method: 'POST', body: body });
+        if (w) {
+          toast('Depósito aprovado automaticamente — saldo creditado!', 'success');
+          loadMe();
+        } else {
+          toast('Hash enviado! Saldo creditado após validação.', 'success');
+        }
         tf.reset(); loadRecent();
       } catch (err) { toast('Erro: ' + err.message, 'error'); }
       finally { if (btn) btn.disabled = false; }

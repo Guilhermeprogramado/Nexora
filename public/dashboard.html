@@ -226,9 +226,9 @@
         <h3><span class="step-num">2</span> Conecte sua carteira</h3>
         <p class="desc" id="walletRecommend">Selecione um ativo acima para ver a carteira recomendada.</p>
         <div class="wallet-grid">
-          <button class="btn btn-ghost wallet-btn" id="btnMetaMask" type="button">🦊 MetaMask<small>redes EVM</small><span class="rec-tag" hidden>Recomendada</span></button>
-          <button class="btn btn-ghost wallet-btn" id="btnPhantom" type="button">👻 Phantom<small>Solana</small><span class="rec-tag" hidden>Recomendada</span></button>
-          <button class="btn btn-ghost wallet-btn" id="btnCoinbase" type="button">🔵 Coinbase Wallet<small>redes EVM</small><span class="rec-tag" hidden>Recomendada</span></button>
+          <button class="btn btn-ghost wallet-btn" id="btnMetaMask" type="button">🦊 MetaMask<small>redes EVM</small></button>
+          <button class="btn btn-ghost wallet-btn" id="btnPhantom" type="button">👻 Phantom<small>Solana</small><span class="rec-tag">Recomendada</span></button>
+          <button class="btn btn-ghost wallet-btn" id="btnSolflare" type="button">🔶 Solflare<small>Solana</small></button>
         </div>
         <div class="install-box" id="walletInstallBox" hidden>
           <b id="walletInstallTitle">Extensão não encontrada</b>
@@ -242,12 +242,12 @@
         <p><button class="btn btn-sm" id="walletDisconnect" type="button" style="display:none">Desconectar</button></p>
       </div>
       <div class="panel">
-        <h3><span class="step-num">3</span> Envie e valide com o hash</h3>
+        <h3><span class="step-num">3</span> Depósito com aprovação automática</h3>
         <div class="alert error" style="margin-bottom:16px">⚠️ <b>ATENÇÃO — confira a REDE antes de enviar.</b> Envie <b>somente na rede indicada no passo 1</b>. Transferências na rede errada podem resultar em <b>PERDA definitiva dos fundos</b>. Confira os primeiros e últimos caracteres do endereço antes de confirmar.</div>
         <div class="form" style="max-width:560px">
           <div><label for="topAmount">Valor enviado (USD)</label><input id="topAmount" type="number" min="1" step="0.01" placeholder="100.00" required/></div>
-          <div><label for="topTxHash">Hash da transferência (obrigatório)</label><input id="topTxHash" type="text" placeholder="0x… ou ID da transação" required/><span class="form-hint">Cole o hash/ID gerado pela sua carteira após enviar. O saldo só é creditado após validação desse hash.</span></div>
-          <div><button class="btn btn-primary" type="submit" id="topupSubmit">Enviar para validação</button></div>
+          <div><label for="topTxHash">Hash da transferência</label><input id="topTxHash" type="text" placeholder="0x… ou ID da transação"/><span class="form-hint" id="topHashHint">Com a carteira conectada no passo 2 o depósito é <b>aprovado automaticamente</b> (saldo creditado na hora, sem esperar admin) e o hash fica opcional.</span></div>
+          <div><button class="btn btn-primary" type="submit" id="topupSubmit">Depositar agora</button></div>
         </div>
       </div>
       </form>

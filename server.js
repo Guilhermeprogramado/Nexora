@@ -86,6 +86,73 @@ function signToken(user) {
   );
 }
 
+/**
+ * Efeito de APROVAR um deposito: credita saldo, soma total_deposited e paga a
+ * comissao de afiliado do PRIMEIRO deposito aprovado. Usado pelo painel admin
+ * e pelo auto-aprovacao via carteira conectada.
+ */
+async function creditDepositApproval(tdb, dep, reason) {
+  await tdb.prepare('UPDATE users SET balance = balance + ?, total_deposited = total_deposited + ? WHERE id = ?')
+    .run(dep.amount, dep.amount, dep.user_id);
+  await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
+    .run(dep.user_id, dep.amount, reason);
+
+  const referred = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
+  if (referred && referred.referred_by) {
+    const firstDeposit = await tdb.prepare(`
+      SELECT COUNT(*) as cnt FROM deposits
+      WHERE user_id = ? AND status = 'active'
+    `).get(dep.user_id);
+    if (firstDeposit && Number(firstDeposit.cnt) === 1) {
+      const referrer = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(referred.referred_by);
+      if (referrer) {
+        const commission = Number(dep.amount) * 0.05;
+        await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
+          .run(commission, referrer.id);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'referral_commission', ?, ?)`)
+          .run(referrer.id, commission, `Comissão 5% do 1º depósito do usuário #${dep.user_id} (${referred.username})`);
+      }
+    }
+  }
+}
+
+// Carteira da conta: chain = 'solana' (Phantom/Solflare) ou 'evm' (MetaMask).
+const WALLET_PATTERNS = {
+  solana: /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+  evm: /^0x[a-fA-F0-9]{40}$/
+};
+
+app.post('/api/auth/wallet', authRequired, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const chain = String(body.chain || '').toLowerCase();
+    const address = String(body.address || '').trim();
+    if (!WALLET_PATTERNS[chain]) {
+      return res.status(400).json({ error: 'Rede invalida (solana/evm).' });
+    }
+    if (!WALLET_PATTERNS[chain].test(address)) {
+      return res.status(400).json({ error: 'Endereco de carteira invalido.' });
+    }
+    await db.prepare(`UPDATE users SET wallet_chain = ?, wallet_address = ?, wallet_connected_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE id = ?`)
+      .run(chain, address, req.user.id);
+    return res.json({ ok: true, chain, address });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Erro ao salvar carteira.' });
+  }
+});
+
+app.post('/api/auth/wallet/disconnect', authRequired, async (req, res) => {
+  try {
+    await db.prepare('UPDATE users SET wallet_chain = NULL, wallet_address = NULL, wallet_connected_at = NULL WHERE id = ?')
+      .run(req.user.id);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Erro ao desconectar carteira.' });
+  }
+});
+
 async function authRequired(req, res, next) {
   const header = req.headers.authorization || '';
   const parts = header.split(' ');
@@ -643,31 +710,45 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
+// Carteira conectada = depósito aprovado AUTOMATICAMENTE (credita saldo na
+    // hora, sem admin). Sem carteira = fluxo antigo: hash + validacao no admin.
+    const auto = !!(String(req.user.wallet_address || '').trim());
     // Um deposito pendente por vez: evita a criacao acidental de linhas
     // duplicadas enquanto o admin nao aprova o primeiro.
-    const pend = await db
-      .prepare("SELECT id FROM deposits WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1")
-      .get(req.user.id);
-    if (pend) {
-      return res.status(400).json({
-        error: `Voce ja tem um deposito (#${pend.id}) aguardando aprovacao. Aguarde a validacao no admin.`
-      });
+    if (!auto) {
+      const pend = await db
+        .prepare("SELECT id FROM deposits WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1")
+        .get(req.user.id);
+      if (pend) {
+        return res.status(400).json({
+          error: `Voce ja tem um deposito (#${pend.id}) aguardando aprovacao. Aguarde a validacao no admin.`
+        });
+      }
     }
     const tx = tx_hash ? String(tx_hash).trim().slice(0, 200) : null;
-    if (!plan && !tx) {
+    if (!plan && !auto && !tx) {
       return res.status(400).json({ error: 'Informe o hash da transferência para validação do saldo.' });
     }
 
-    const info = await db
-      .prepare(`INSERT INTO deposits (user_id, plan_id, amount, gateway_id, status, tx_hash)
-                VALUES (?, ?, ?, ?, 'pending', ?)`)
-      .run(req.user.id, planId, amt, gwId, tx);
-    await db.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
-                VALUES (?, 'deposit_pending', ?, ?)`)
-      .run(req.user.id, amt, plan
-        ? `Deposito #${info.lastInsertRowid} pendente (${plan.name}/${gw.symbol})`
-        : `Adicao de saldo #${info.lastInsertRowid} pendente (${gw.symbol}) — hash ${tx}`);
-    const dep = await db.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
+    const doDeposit = db.transaction(async (tdb) => {
+      const info = await tdb
+        .prepare(`INSERT INTO deposits (user_id, plan_id, amount, gateway_id, status, tx_hash)
+                  VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(req.user.id, planId, amt, gwId, auto ? 'active' : 'pending', auto ? (tx || ('carteira:' + req.user.wallet_address)) : tx);
+      const dep = await tdb.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
+      if (auto) {
+        await creditDepositApproval(tdb, dep,
+          `Deposito #${dep.id} aprovado automaticamente (carteira ` + req.user.wallet_chain + `) — saldo liberado`);
+      } else {
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
+                    VALUES (?, 'deposit_pending', ?, ?)`)
+          .run(req.user.id, amt, plan
+            ? `Deposito #${info.lastInsertRowid} pendente (${plan.name}/${gw.symbol})`
+            : `Adicao de saldo #${info.lastInsertRowid} pendente (${gw.symbol}) — hash ${tx}`);
+      }
+      return dep;
+    });
+    const dep = await doDeposit;
     return res.status(201).json(dep);
   } catch (err) {
     console.error(err);
@@ -973,33 +1054,10 @@ const apply = db.transaction(async (tdb) => {
         // Deposito aprovado = SALDO liberado. O investimento no plano e feito
         // depois pelo usuario em /api/my/invest (automatico). A aprovacao aqui
         // NUNCA abre posicao nem marca active_deposit.
-        await tdb.prepare('UPDATE users SET balance = balance + ?, total_deposited = total_deposited + ? WHERE id = ?')
-          .run(dep.amount, dep.amount, dep.user_id);
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
-          .run(dep.user_id, dep.amount, dep.plan_id
-            ? `Deposito #${id} aprovado — saldo liberado para investir`
-            : `Adicao de saldo #${id} validada (hash confirmado)`);
-
-        // Comissão de afiliado: 5% do PRIMEIRO depósito do usuário indicado
-        // Só paga se o usuário foi indicado (referred_by) e este é seu primeiro depósito aprovado
-        const referred = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
-        if (referred && referred.referred_by) {
-          const firstDeposit = await tdb.prepare(`
-            SELECT COUNT(*) as cnt FROM deposits
-            WHERE user_id = ? AND status = 'active'
-          `).get(dep.user_id);
-          if (firstDeposit && Number(firstDeposit.cnt) === 1) {
-            const referrer = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(referred.referred_by);
-            if (referrer) {
-              const commission = Number(dep.amount) * 0.05;
-              await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
-                .run(commission, referrer.id);
-              await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'referral_commission', ?, ?)`)
-                .run(referrer.id, commission, `Comissão 5% do 1º depósito do usuário #${dep.user_id} (${referred.username})`);
-            }
-          }
-        }
-} else if (prev === 'active' && status !== 'active') {
+        await creditDepositApproval(tdb, dep, dep.plan_id
+          ? `Deposito #${id} aprovado — saldo liberado para investir`
+          : `Adicao de saldo #${id} validada (hash confirmado)`);
+      } else if (prev === 'active' && status !== 'active') {
         // Reverter um deposito aprovado devolve o principal. Posicoes legadas
         // (modelo antigo, deposit_id preenchido) sao fechadas e o rendimento
         // acumulado e estornado.
