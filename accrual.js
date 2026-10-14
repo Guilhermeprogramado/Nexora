@@ -114,7 +114,11 @@ function projectPosition(pos, onDate) {
  * @returns {{credited:number, gross:number, positions:Array}}
  */
 async function runAccruals(db, opts = {}) {
-  const onDate = opts.onDate || todayStr();
+  // Sem `onDate` explicito, o catch-up usa o INSTANTE atual (nao a meia-noite
+  // UTC). As janelas de credito sao ancoradas no momento exato do investimento
+  // (created_at), entao arredondar para o dia atrasaria o credito/fechamento
+  // em ate ~24h — o dashboard acusava "periodo encerrado" sem liberar o saldo.
+  const onDate = opts.onDate || new Date().toISOString();
   return db.transaction(async (tdb) => {
     const allRows = await tdb
       .prepare("SELECT * FROM positions WHERE status = 'active' ORDER BY id ASC")

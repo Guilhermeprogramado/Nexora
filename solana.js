@@ -184,13 +184,109 @@ async function readPortfolio(ownerPubkey) {
   };
 }
 
+// ------------------------------------------------------ Pagamentos (deposito)
+
+// O RPC de LEITURA (Jito/Kamino/portfolio) e mainnet. Os PAGAMENTOS usam um RPC
+// proprio, configuravel por SOLANA_PAY_RPC_URL. Em producao, sem essa variavel, cai
+// no SOLANA_RPC_URL e por fim na mainnet publica -> recebe SOL real. Para testar
+// sem dinheiro real, defina SOLANA_PAY_RPC_URL=https://api.devnet.solana.com.
+const PAY_RPC_URL = process.env.SOLANA_PAY_RPC_URL
+  || process.env.SOLANA_RPC_URL
+  || 'https://api.mainnet-beta.solana.com';
+let payConn = null;
+function payConnection() {
+  if (!payConn) payConn = new Connection(PAY_RPC_URL, 'confirmed');
+  return payConn;
+}
+function payNetwork() {
+  const u = String(PAY_RPC_URL).toLowerCase();
+  if (u.includes('devnet')) return 'devnet';
+  if (u.includes('testnet')) return 'testnet';
+  return 'mainnet-beta';
+}
+
+// Preco do SOL em USD de fonte real (CoinGecko). Retorna null se indisponivel:
+// nunca inventa cotacao.
+async function getSolPriceUsd() {
+  try {
+    const headers = { Accept: 'application/json' };
+    if (process.env.COINGECKO_API_KEY) headers['x-cg-demo-api-key'] = process.env.COINGECKO_API_KEY;
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {
+      headers,
+      signal: AbortSignal.timeout(10000)
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const p = j && j.solana ? Number(j.solana.usd) : NaN;
+    return Number.isFinite(p) && p > 0 ? p : null;
+  } catch (err) {
+    console.error('[solana] preco SOL:', err.message);
+    return null;
+  }
+}
+
+// Verifica ON-CHAIN que `signature` transferiu >= minLamports de `from` para
+// `to`. Confirma em `confirmed` e tenta algumas vezes (propagacao demora).
+// O saldo so pode ser creditado se isto retornar ok:true.
+async function verifySolTransfer({ signature, from, to, minLamports, attempts = 8, delayMs = 1500 }) {
+  if (!signature) return { ok: false, error: 'assinatura ausente' };
+  const c = payConnection();
+  for (let i = 0; i < attempts; i++) {
+    let tx = null;
+    try {
+      tx = await c.getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+    } catch (err) {
+      if (i === attempts - 1) return { ok: false, error: 'falha ao ler a transacao: ' + err.message };
+    }
+    if (tx) {
+      if (tx.meta && tx.meta.err) return { ok: false, error: 'a transacao falhou na blockchain' };
+      const msg = tx.transaction && tx.transaction.message;
+      const pre = (tx.meta && tx.meta.preBalances) || [];
+      const post = (tx.meta && tx.meta.postBalances) || [];
+      // Monta a lista COMPLETA de contas na MESMA ordem de pre/postBalances:
+      // v0 = estaticas + loaded(writable) + loaded(readonly); legado = accountKeys.
+      let keys;
+      if (msg && msg.staticAccountKeys) {
+        const loaded = (tx.meta && tx.meta.loadedAddresses) || {};
+        const b58 = (k) => (k && k.toBase58 ? k.toBase58() : String(k));
+        keys = msg.staticAccountKeys.map(b58)
+          .concat((loaded.writable || []).map(b58))
+          .concat((loaded.readonly || []).map(b58));
+      } else {
+        keys = ((msg && msg.accountKeys) || []).map((k) => (k && k.toBase58 ? k.toBase58() : String(k)));
+      }
+      // Seguranca: se o layout nao casar com as balancas, NAO credita.
+      if (keys.length !== pre.length || pre.length !== post.length) {
+        return { ok: false, error: 'layout de contas inesperado' };
+      }
+      const toIdx = keys.indexOf(to);
+      const fromIdx = from ? keys.indexOf(from) : -1;
+      if (toIdx < 0) return { ok: false, error: 'endereco de destino nao aparece na transacao' };
+      if (from && fromIdx < 0) return { ok: false, error: 'carteira de origem nao aparece na transacao' };
+      const received = Number(post[toIdx] || 0) - Number(pre[toIdx] || 0);
+      if (!(received >= minLamports)) {
+        return { ok: false, error: `valor recebido (${received} lamports) abaixo do esperado (${minLamports})` };
+      }
+      return { ok: true, lamports: received, slot: tx.slot };
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return { ok: false, error: 'transacao ainda nao confirmada' };
+}
+
 module.exports = {
   RPC_URL,
+  PAY_RPC_URL,
+  LAMPORTS_PER_SOL,
   PublicKey,
   JITO,
   KLEND,
   MINTS,
   connection,
+  payConnection,
+  payNetwork,
+  getSolPriceUsd,
+  verifySolTransfer,
   readJitoPool,
   readUsdtVaults,
   readPortfolio

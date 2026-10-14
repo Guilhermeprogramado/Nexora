@@ -130,6 +130,10 @@
     if (t) t.textContent = TITLES[route] || 'Dashboard';
     closeDrawer();
     lazyLoad(route);
+    // Saldo/posicoes podem ter mudado (plano vencido -> principal liberado).
+    // Recarrega o perfil ao entrar nas telas que dependem de saldo para nao
+    // mostrar valor defasado do servidor.
+    if (route === 'dashboard' || route === 'deposit' || route === 'withdraw') loadMe();
   }
   function lazyLoad(route) {
     if (loaded[route]) return;
@@ -729,6 +733,8 @@
     var hid = $('topAddrValue');
     if (hid) hid.value = addr;
     paintWalletRecommend();
+    paintWallet();
+    paintSolConvert();
   }
 
   function getWallet() {
@@ -747,16 +753,126 @@
     var w = getWallet();
     var submit = $('topupSubmit');
     var hash = $('topTxHash');
+    var hashWrap = $('topHashWrap');
+    var g = selectedGateway();
+    var kind = g ? walletKind(g.network) : 'other';
+    var addr = g ? (g.wallet_address || g.address || g.wallet || '') : '';
+    // No fluxo Solana a assinatura e gerada automaticamente: escondemos o hash.
+    if (hashWrap) hashWrap.hidden = (kind === 'sol');
     if (w) {
-      if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) + '</span> · <b style="color:var(--green,#10b981)">depósito com aprovação automática</b>';
+      var amt = $('topAmount') ? Number($('topAmount').value) : 0;
+      var dest = addr
+        ? ' Envie para <b class="mono">' + esc(addr) + '</b>' +
+          (g && g.network ? ' (rede ' + esc(g.network) + ')' : '') +
+          (amt > 0 ? ' o valor de <b>' + money(amt) + '</b>' : '') + '.'
+        : ' Selecione a moeda/rede no passo 1 para ver o endereço de destino.';
+      if (kind === 'sol') {
+        if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) +
+          '</span> · <b style="color:var(--green,#10b981)">pagamento Solana verificado on-chain</b>.' + dest;
+        if (submit) submit.textContent = 'Pagar com Solana e creditar';
+      } else {
+        if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) +
+          '</span> · <b style="color:var(--green,#10b981)">depósito com aprovação automática</b>.' + dest;
+        if (submit) submit.textContent = 'Aprovar depósito e creditar';
+      }
       if (hash) hash.required = false;
-      if (submit) submit.textContent = 'Depositar e creditar agora';
     } else {
-      if (st) st.textContent = 'Nenhuma carteira conectada. Sem carteira, o depósito fica pendente até o hash ser validado pelo admin.';
-      if (hash) hash.required = true;
-      if (submit) submit.textContent = 'Enviar para validação';
+      if (kind === 'sol') {
+        if (st) st.textContent = 'Conecte a Phantom ou a Solflare no passo 2 para pagar em SOL. O valor em USD é convertido e verificado na blockchain antes de creditar.';
+        if (submit) submit.textContent = 'Conectar Solana e pagar';
+      } else {
+        if (st) st.textContent = 'Nenhuma carteira conectada. Sem carteira, o depósito fica pendente até o hash ser validado pelo admin.';
+        if (submit) submit.textContent = 'Enviar para validação';
+      }
+      if (hash) hash.required = (kind !== 'sol');
     }
     if (dc) dc.style.display = w ? '' : 'none';
+  }
+
+  /* ---------- Solana: conversao USD->SOL e pagamento on-chain ---------- */
+  var solPriceCache = { usd: null, at: 0 };
+  async function fetchSolPrice() {
+    if (solPriceCache.usd && (Date.now() - solPriceCache.at) < 60000) return solPriceCache.usd;
+    try {
+      var d = await api('/api/solana/price');
+      var p = d && Number(d.usd);
+      if (isFinite(p) && p > 0) { solPriceCache = { usd: p, at: Date.now() }; return p; }
+    } catch (e) {}
+    return null;
+  }
+  async function paintSolConvert() {
+    var el = $('topSolConvert');
+    if (!el) return;
+    var g = selectedGateway();
+    if (!g || walletKind(g.network) !== 'sol') { el.textContent = ''; return; }
+    var amt = $('topAmount') ? Number($('topAmount').value) : 0;
+    if (!isFinite(amt) || amt <= 0) { el.textContent = 'Digite o valor em USD para ver a conversão em SOL.'; return; }
+    el.textContent = 'Calculando…';
+    var p = await fetchSolPrice();
+    if (!p) { el.textContent = 'Cotação do SOL indisponível no momento.'; return; }
+    el.innerHTML = '≈ <b>' + (amt / p).toFixed(6) + ' SOL</b> (SOL = $' + p.toFixed(2) + ')';
+  }
+  async function ensureSolanaProvider() {
+    var key = solanaProvider('phantom') ? 'phantom' : (solanaProvider('solflare') ? 'solflare' : null);
+    if (!key) { showWalletInstall('phantom'); throw new Error('Instale a Phantom ou a Solflare para pagar em Solana.'); }
+    var provider = solanaProvider(key);
+    var r;
+    try { r = await provider.connect(); }
+    catch (e) { throw new Error('conexão da carteira cancelada'); }
+    var pkObj = r && (r.publicKey || r.address) ? (r.publicKey || r.address) : provider.publicKey;
+    var pk = pkObj ? (pkObj.toString ? pkObj.toString() : String(pkObj)) : '';
+    if (!pk) throw new Error('a carteira não retornou o endereço');
+    await persistWalletServer('solana', pk);
+    saveWallet(key === 'phantom' ? 'Phantom' : 'Solflare', pk);
+    return { provider: provider, address: pk };
+  }
+  async function solanaPayFlow() {
+    var btn = $('topupSubmit');
+    var gateway = $('topGateway') && $('topGateway').value;
+    var amount = $('topAmount') ? Number($('topAmount').value) : 0;
+    if (!gateway || !isFinite(amount) || amount <= 0) { toast('Escolha a moeda/rede e o valor.', 'error'); return; }
+    if (btn) btn.disabled = true;
+    try {
+      // 1) conecta a carteira Solana (abre a extensao, se necessario)
+      var wallet = await ensureSolanaProvider();
+      // 2) o servidor valida o gateway e converte USD -> lamports (cotacao real)
+      var intent = await api('/api/solana/pay-intent', { method: 'POST', body: { amount_usd: amount, gateway_id: gateway } });
+      if (!intent || !intent.lamports) throw new Error('não foi possível preparar o pagamento');
+      // 3) monta a transacao; o navegador fala com a rede via proxy do servidor
+      var web3 = await import('https://esm.sh/@solana/web3.js@1');
+      var rpcFetch = function (url, opts) {
+        var body = (opts && opts.body) ? opts.body : '{}';
+        return fetch('/api/solana/rpc', { method: 'POST', headers: authHeaders(), body: body });
+      };
+      var conn = new web3.Connection('https://rpc.nexora.local', { commitment: 'confirmed', fetch: rpcFetch });
+      var from = new web3.PublicKey(wallet.address);
+      var to = new web3.PublicKey(intent.destination);
+      var tx = new web3.Transaction().add(
+        web3.SystemProgram.transfer({ fromPubkey: from, toPubkey: to, lamports: intent.lamports })
+      );
+      tx.feePayer = from;
+      var bh = await conn.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = bh.blockhash;
+      // 4) assina na carteira e envia. Se o usuario recusar, NADA e cobrado.
+      var signed = await wallet.provider.signTransaction(tx);
+      var signedTx = (signed && signed.serialize) ? signed : (signed && signed.signedTransaction);
+      if (!signedTx || !signedTx.serialize) throw new Error('a carteira não retornou a transação assinada');
+      var signature = await conn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
+      toast('Transação enviada. Confirmando na blockchain…', 'success');
+      // 5) registra o deposito; o servidor verifica on-chain ANTES de creditar.
+      var dep = await api('/api/my/deposits', { method: 'POST', body: { amount: amount, gateway_id: gateway, tx_hash: signature } });
+      if (dep && dep.status === 'active') {
+        toast('Pagamento confirmado! Saldo de ' + money(amount) + ' creditado.', 'success');
+        var tf = $('topupForm'); if (tf) tf.reset();
+        loadRecent(); loadMe(); loadPositions();
+      } else {
+        toast('Pagamento registrado. Aguardando validação do admin.', 'success');
+      }
+      paintSolConvert();
+    } catch (err) {
+      // Erro/cancelamento em qualquer etapa: o saldo NAO e creditado.
+      toast('Pagamento não concluído: ' + (err && err.message ? err.message : err), 'error');
+    } finally { if (btn) btn.disabled = false; }
   }
   async function connectEVM(provider, type) {
     if (!provider || !provider.request) { toast('Carteira ' + type + ' não encontrada neste navegador.', 'error'); return; }
@@ -873,8 +989,14 @@
       copyText(v, 'Endereço copiado! Confira a rede antes de enviar.');
     });
     var tf = $('topupForm');
+    var ta = $('topAmount');
+    if (ta) ta.addEventListener('input', function () { paintWallet(); paintSolConvert(); });
     if (tf) tf.addEventListener('submit', async function (e) {
       e.preventDefault();
+      // Gateway Solana: fluxo de pagamento on-chain (carteira -> assinatura ->
+      // verificacao -> credito). Nada e creditado se o pagamento falhar.
+      var sel = selectedGateway();
+      if (sel && walletKind(sel.network) === 'sol') { solanaPayFlow(); return; }
       var btn = $('topupSubmit');
       var gateway = $('topGateway') && $('topGateway').value;
       var amount = $('topAmount') && Number($('topAmount').value);
@@ -886,14 +1008,15 @@
       try {
         var body = { amount: amount, gateway_id: gateway };
         if (tx) body.tx_hash = tx;
-        await api('/api/my/deposits', { method: 'POST', body: body });
-        if (w) {
+        var dep = await api('/api/my/deposits', { method: 'POST', body: body });
+        // O status real vem do servidor: com carteira salva o deposito entra
+        // 'active' (saldo creditado na hora); sem carteira fica 'pending'.
+        if (dep && dep.status === 'active') {
           toast('Depósito aprovado automaticamente — saldo creditado!', 'success');
-          loadMe();
         } else {
-          toast('Hash enviado! Saldo creditado após validação.', 'success');
+          toast('Depósito enviado! Saldo liberado após validação.', 'success');
         }
-        tf.reset(); loadRecent();
+        tf.reset(); loadRecent(); loadMe(); loadPositions();
       } catch (err) { toast('Erro: ' + err.message, 'error'); }
       finally { if (btn) btn.disabled = false; }
     });

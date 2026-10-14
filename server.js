@@ -1,3 +1,4 @@
+require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
@@ -24,6 +25,20 @@ let db = null;
 async function ensureDb() {
   if (!db) db = await getDb();
   return db;
+}
+
+// Catch-up idempotente do accrue: credita os dias vencidos e fecha/libera o
+// principal de planos concluidos. O cron ou o intervalo interno pode ter
+// ficado parado (serverless frio, processo reiniciado), entao toda leitura de
+// saldo/posicao roda isto antes de responder — sem isso o usuario via
+// "periodo encerrado" mas o saldo nao liberava.
+async function catchUpAccruals() {
+  try {
+    return await accrual.runAccruals(db);
+  } catch (err) {
+    console.error('[accrue catch-up]', err.message);
+    return null;
+  }
 }
 
 const app = express();
@@ -552,7 +567,11 @@ app.get('/api/crypto/prices', async (req, res) => {
 // ---------- user (auth) ----------
 app.get('/api/me', authRequired, async (req, res) => {
   try {
-    const out = sanitizeUser(req.user);
+    // Catch-up antes de montar o saldo: garante que planos ja vencidos tenham
+    // liberado o principal (invested_released) e o saldo esteja atualizado.
+    await catchUpAccruals();
+    const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const out = sanitizeUser(fresh || req.user);
     out.simulated = await isSimulation();
     // Saca so apos TODO o saldo depositado passar por um plano (ciclo completo).
     out.has_investment = !!(await db
@@ -580,7 +599,7 @@ app.get('/api/my/positions', authRequired, async (req, res) => {
     // Catch-up idempotente: credita dias vencidos que o cron pode ter perdido,
     // para o dashboard nunca mostrar posicao parada no tempo (ex: plano que
     // deveria ter fechado no dia anterior).
-    try { await accrual.runAccruals(db); } catch (e) { console.error('[accrue catch-up]', e.message); }
+    await catchUpAccruals();
     const rows = await db.prepare('SELECT * FROM positions WHERE user_id = ? ORDER BY id DESC').all(req.user.id);
     const sim = await isSimulation();
     return res.json({
@@ -710,9 +729,45 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
-// Carteira conectada = depósito aprovado AUTOMATICAMENTE (credita saldo na
-    // hora, sem admin). Sem carteira = fluxo antigo: hash + validacao no admin.
-    const auto = !!(String(req.user.wallet_address || '').trim());
+    const tx = tx_hash ? String(tx_hash).trim().slice(0, 200) : null;
+    const walletAddr = String(req.user.wallet_address || '').trim();
+    const gwNet = String(gw.network || '').toUpperCase();
+    const solanaGateway = gwNet.includes('SOL') || gwNet.includes('SPL');
+    // Gateway Solana: exige pagamento real VERIFICADO on-chain ANTES de creditar.
+    // Se a transacao nao existir/confirmar, NADA entra no saldo.
+    let verifiedSolana = null;
+    if (solanaGateway) {
+      if (!walletAddr) {
+        return res.status(400).json({ error: 'Conecte sua carteira Solana antes de pagar.' });
+      }
+      if (!tx) {
+        return res.status(400).json({ error: 'Pagamento Solana exige a assinatura da transacao.' });
+      }
+      const usedTx = await db.prepare('SELECT id FROM deposits WHERE tx_hash = ?').get(tx);
+      if (usedTx) {
+        return res.status(400).json({ error: 'Esta transacao ja foi usada em outro deposito.' });
+      }
+      let dest;
+      try {
+        dest = new solana.PublicKey(String(gw.wallet_address || '').trim()).toBase58();
+      } catch (e) {
+        return res.status(400).json({ error: 'Carteira de destino invalida. Ajuste em Admin > Gateways.' });
+      }
+      const price = await solana.getSolPriceUsd();
+      if (!Number.isFinite(price) || price <= 0) {
+        return res.status(503).json({ error: 'Cotacao do SOL indisponivel. Tente novamente.' });
+      }
+      const expected = Math.floor((amt / price) * solana.LAMPORTS_PER_SOL);
+      const minLamports = Math.floor(expected * 0.95);
+      const check = await solana.verifySolTransfer({ signature: tx, from: walletAddr, to: dest, minLamports });
+      if (!check.ok) {
+        return res.status(400).json({ error: 'Pagamento nao confirmado: ' + check.error + '. O saldo nao foi creditado.' });
+      }
+      verifiedSolana = check;
+    }
+    // Carteira conectada (fluxo antigo, nao-Solana) = deposito aprovado
+    // automaticamente. Sem carteira = hash + validacao no admin.
+    const auto = verifiedSolana ? true : (!solanaGateway && !!walletAddr);
     // Um deposito pendente por vez: evita a criacao acidental de linhas
     // duplicadas enquanto o admin nao aprova o primeiro.
     if (!auto) {
@@ -725,7 +780,6 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
         });
       }
     }
-    const tx = tx_hash ? String(tx_hash).trim().slice(0, 200) : null;
     if (!plan && !auto && !tx) {
       return res.status(400).json({ error: 'Informe o hash da transferência para validação do saldo.' });
     }
@@ -737,8 +791,10 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
         .run(req.user.id, planId, amt, gwId, auto ? 'active' : 'pending', auto ? (tx || ('carteira:' + req.user.wallet_address)) : tx);
       const dep = await tdb.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
       if (auto) {
-        await creditDepositApproval(tdb, dep,
-          `Deposito #${dep.id} aprovado automaticamente (carteira ` + req.user.wallet_chain + `) — saldo liberado`);
+        const detail = verifiedSolana
+          ? `Deposito #${dep.id} confirmado on-chain (Solana ${solana.payNetwork()}, ${verifiedSolana.lamports} lamports) — saldo liberado`
+          : `Deposito #${dep.id} aprovado automaticamente (carteira ` + req.user.wallet_chain + `) — saldo liberado`;
+        await creditDepositApproval(tdb, dep, detail);
       } else {
         await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
                     VALUES (?, 'deposit_pending', ?, ?)`)
@@ -846,6 +902,10 @@ app.post('/api/my/withdrawals', authRequired, async (req, res) => {
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
+    // Catch-up antes de checar a regra de liberacao: se um plano acabou de
+    // vencer, o principal precisa estar em invested_released/balance para o
+    // saque nao ser bloqueado por estado desatualizado.
+    await catchUpAccruals();
     const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const available = (fresh.balance || 0) - (fresh.pending_withdraw || 0);
     if (amt > available) {
@@ -1611,6 +1671,97 @@ app.get('/api/solana/portfolio', solLimiter, async (req, res) => {
   } catch (err) {
     console.error('portfolio read:', err.message);
     return res.status(500).json({ error: 'Falha ao ler saldos.' });
+  }
+});
+
+// -------------------------------------------------- Pagamentos Solana (deposito)
+
+// Cotacao real do SOL para o front converter USD -> SOL.
+app.get('/api/solana/price', solLimiter, async (req, res) => {
+  try {
+    const usd = await solana.getSolPriceUsd();
+    return res.json({ usd, network: solana.payNetwork(), available: Number.isFinite(usd) });
+  } catch (err) {
+    console.error('sol price:', err.message);
+    return res.json({ usd: null, network: solana.payNetwork(), available: false });
+  }
+});
+
+// Prepara o pagamento: valida o gateway Solana e devolve destino + lamports
+// convertidos do valor em USD. O cliente usa isso para montar a transacao.
+app.post('/api/solana/pay-intent', authRequired, solLimiter, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const amt = toNum(body.amount_usd);
+    const gwId = parseInt(body.gateway_id, 10);
+    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Valor invalido.' });
+    if (!Number.isInteger(gwId) || gwId <= 0) return res.status(400).json({ error: 'Gateway invalido.' });
+    const gw = await db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
+    if (!gw || !gw.active) return res.status(400).json({ error: 'Gateway indisponivel.' });
+    const net = String(gw.network || '').toUpperCase();
+    if (!(net.includes('SOL') || net.includes('SPL'))) {
+      return res.status(400).json({ error: 'Este gateway nao e Solana.' });
+    }
+    let dest;
+    try {
+      dest = new solana.PublicKey(String(gw.wallet_address || '').trim()).toBase58();
+    } catch (e) {
+      return res.status(400).json({ error: 'Carteira de destino invalida. Ajuste em Admin > Gateways.' });
+    }
+    const price = await solana.getSolPriceUsd();
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(503).json({ error: 'Cotacao do SOL indisponivel. Tente novamente.' });
+    }
+    const lamports = Math.floor((amt / price) * solana.LAMPORTS_PER_SOL);
+    if (lamports <= 0) return res.status(400).json({ error: 'Valor muito baixo.' });
+    return res.json({
+      ok: true,
+      network: solana.payNetwork(),
+      destination: dest,
+      amount_usd: accrual.round2(amt),
+      sol_price: price,
+      sol_amount: lamports / solana.LAMPORTS_PER_SOL,
+      lamports
+    });
+  } catch (err) {
+    console.error('pay-intent:', err.message);
+    return res.status(500).json({ error: 'Erro ao preparar o pagamento.' });
+  }
+});
+
+// Proxy JSON-RPC (allowlist) para a carteira falar com o RPC de pagamento sem
+// expor o endpoint nem sofrer com CORS no navegador.
+const SOLANA_RPC_ALLOWED = new Set([
+  'getLatestBlockhash', 'getRecentBlockhash', 'isBlockhashValid',
+  'sendTransaction', 'getSignatureStatuses', 'getTransaction',
+  'getBalance', 'getBlockHeight', 'getEpochInfo', 'getFeeForMessage',
+  'getMinimumBalanceForRentExemption', 'getVersion'
+]);
+app.post('/api/solana/rpc', authRequired, solLimiter, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const method = String(body.method || '');
+    if (!SOLANA_RPC_ALLOWED.has(method)) {
+      return res.status(400).json({ error: 'Metodo RPC nao permitido.' });
+    }
+    const payload = {
+      jsonrpc: '2.0',
+      id: body.id != null ? body.id : 1,
+      method,
+      params: Array.isArray(body.params) ? body.params : []
+    };
+    const r = await fetch(solana.PAY_RPC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20000)
+    });
+    const j = await r.json().catch(() => null);
+    if (!j) return res.status(502).json({ error: 'RPC sem resposta.' });
+    return res.json(j);
+  } catch (err) {
+    console.error('rpc proxy:', err.message);
+    return res.status(502).json({ error: 'Falha ao falar com a rede Solana.' });
   }
 });
 

@@ -1,5 +1,6 @@
 // Cria usuário demo (idempotente). Uso: node criar-demo.js
-// Exige DATABASE_URL no ambiente (Supabase Postgres).
+// Exige DATABASE_URL no ambiente (Supabase Postgres) ou em .env.
+require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { getDb, closeDb } = require('./db');
 

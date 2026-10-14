@@ -2,7 +2,8 @@
 // Uso:
 //   npm run init-db              -> garante schema/seeds (nao apaga dados)
 //   node init-db.js --reset      -> DROP de todas as tabelas e recria do zero
-// Exige DATABASE_URL no ambiente.
+// Exige DATABASE_URL no ambiente (ou em .env).
+require('dotenv').config();
 const { getDb, initDatabase, closeDb } = require('./db');
 
 const TABLE_ORDER = [
