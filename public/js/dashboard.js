@@ -143,13 +143,13 @@
     else if (route === 'deposits') loadDeposits();
     else if (route === 'referrals') loadReferrals();
     else if (route === 'deposit') { loadPlans(); loadMe(); }
-    else if (route === 'wallet') loadWalletGateways();
+    else if (route === 'wallet') { loadPublicSettings(); loadWalletGateways(); }
     else if (route === 'withdraw') loadGateways();
   }
   window.addEventListener('hashchange', function () { render(currentRoute()); });
 
   /* ---------- state ---------- */
-  var state = { me: null, plans: [], gateways: [], positions: [], available: 0, balance: 0, withdrawUnlocked: false, hasInvestment: null, wallet: null };
+  var state = { me: null, plans: [], gateways: [], positions: [], available: 0, balance: 0, withdrawUnlocked: false, hasInvestment: null, wallet: null, settings: {} };
 
   /* O servidor devolve objetos ({ simulated, positions }) e não listas.
      Aceitar as duas formas evita painel vazio quando a API muda. */
@@ -643,7 +643,7 @@
   /* ---------- carteira: redes + conexão ---------- */
   function walletHint(net) {
     var n = String(net || '').toUpperCase();
-    if (n.indexOf('SOL') >= 0 || n.indexOf('SPL') >= 0) return 'Use a Phantom (Solana) para enviar nesta rede.';
+    if (n.indexOf('SOL') >= 0 || n.indexOf('SPL') >= 0) return 'Use a Solflare (Solana) para enviar nesta rede.';
     if (n.indexOf('BEP20') >= 0 || n.indexOf('ERC20') >= 0 || n.indexOf('ETH') >= 0 || n.indexOf('BNB') >= 0 || n.indexOf('POLYGON') >= 0 || n.indexOf('ARBITRUM') >= 0 || n.indexOf('EVM') >= 0) return 'Use a MetaMask para enviar nesta rede.';
     if (n.indexOf('TRC20') >= 0 || n.indexOf('TRX') >= 0) return 'Use TronLink ou o app da sua corretora (rede Tron).';
     return 'Envie pelo app oficial da moeda, sempre na rede indicada acima.';
@@ -666,6 +666,43 @@
     var g = state.gateways.filter(function (x) { return String(x.id ?? x._id ?? x.code ?? x.name) === String(sel.value); })[0];
     return g || null;
   }
+  // Carteiras aceitas no depósito — controladas pelo admin (Config Site).
+  // Sem a chave salva no banco, valem os defaults: só a Solflare habilitada.
+  var WALLET_DEFAULT_ENABLED = { solflare: true, phantom: false, metamask: false };
+  function walletEnabled(key) {
+    var v = state.settings ? state.settings['wallet_' + key + '_enabled'] : null;
+    if (v == null || v === '') return !!WALLET_DEFAULT_ENABLED[key];
+    var s = String(v).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'on';
+  }
+  function firstEnabledSolanaKey() {
+    if (walletEnabled('solflare')) return 'solflare';
+    if (walletEnabled('phantom')) return 'phantom';
+    return null;
+  }
+  function paintWalletGrid() {
+    var map = { metamask: 'btnMetaMask', phantom: 'btnPhantom', solflare: 'btnSolflare' };
+    var any = false;
+    Object.keys(map).forEach(function (k) {
+      var b = $(map[k]);
+      if (!b) return;
+      var on = walletEnabled(k);
+      b.style.display = on ? '' : 'none';
+      if (on) any = true;
+    });
+    var grid = $('walletGrid');
+    if (grid) grid.style.display = any ? '' : 'none';
+    return any;
+  }
+  async function loadPublicSettings() {
+    try {
+      var s = await api('/api/public/settings');
+      if (s && typeof s === 'object' && !Array.isArray(s)) state.settings = s;
+    } catch (e) {}
+    paintWalletGrid();
+    paintWalletRecommend();
+    paintWallet();
+  }
   function paintWalletRecommend() {
     var rec = $('walletRecommend');
     var g = selectedGateway();
@@ -677,13 +714,26 @@
     var label = esc(g.symbol || '') + ' na rede ' + esc(g.network || '');
     function mark(btn) { if (!btn) return; btn.classList.add('recommended'); var t = btn.querySelector('.rec-tag'); if (t) t.hidden = false; }
     if (kind === 'evm') {
-      mark(bm);
-      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>MetaMask</b> (destacada). Clique para conectar.';
+      if (walletEnabled('metamask')) {
+        mark(bm);
+        if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>MetaMask</b> (destacada). Clique para conectar.';
+      } else if (rec) {
+        rec.innerHTML = 'A carteira <b>MetaMask</b> está <b>desabilitada</b> no momento. Use o hash da transferência no passo 2.';
+      }
     } else if (kind === 'sol') {
-      mark(bp); mark(bs);
-      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, use <b>Phantom</b> ou <b>Solflare</b> (destacadas). Clique para conectar.';
+      var names = [];
+      if (walletEnabled('phantom')) names.push('Phantom');
+      if (walletEnabled('solflare')) names.push('Solflare');
+      var firstKey = firstEnabledSolanaKey();
+      if (firstKey === 'phantom') mark(bp);
+      else if (firstKey === 'solflare') mark(bs);
+      if (names.length && rec) {
+        rec.innerHTML = 'Para <b>' + label + '</b>, use <b>' + names.join('</b> ou <b>') + '</b>. Ao clicar em <b>Depositar</b>, a carteira abre para você <b>aprovar a transação</b> — nada é cobrado sem a sua aprovação.';
+      } else if (rec) {
+        rec.innerHTML = 'As carteiras Solana estão <b>desabilitadas</b> no momento. Use o hash da transferência no passo 2.';
+      }
     } else {
-      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, envie pelo app oficial da moeda (ou corretora) e cole o hash no passo 3.';
+      if (rec) rec.innerHTML = 'Para <b>' + label + '</b>, envie pelo app oficial da moeda (ou corretora) e cole o hash no passo 2.';
     }
   }
   function showWalletInstall(key) {
@@ -757,34 +807,42 @@
     var g = selectedGateway();
     var kind = g ? walletKind(g.network) : 'other';
     var addr = g ? (g.wallet_address || g.address || g.wallet || '') : '';
-    // No fluxo Solana a assinatura e gerada automaticamente: escondemos o hash.
+    var solKey = firstEnabledSolanaKey();
+    var solName = solKey === 'phantom' ? 'Phantom' : 'Solflare';
+    // No fluxo Solana nao ha hash: a carteira assina a transferencia no proprio app.
     if (hashWrap) hashWrap.hidden = (kind === 'sol');
     if (w) {
       var amt = $('topAmount') ? Number($('topAmount').value) : 0;
       var dest = addr
-        ? ' Envie para <b class="mono">' + esc(addr) + '</b>' +
+        ? ' Destino: <b class="mono">' + esc(addr) + '</b>' +
           (g && g.network ? ' (rede ' + esc(g.network) + ')' : '') +
-          (amt > 0 ? ' o valor de <b>' + money(amt) + '</b>' : '') + '.'
+          (amt > 0 ? ' · valor <b>' + money(amt) + '</b>' : '') + '.'
         : ' Selecione a moeda/rede no passo 1 para ver o endereço de destino.';
       if (kind === 'sol') {
         if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) +
-          '</span> · <b style="color:var(--green,#10b981)">pagamento Solana verificado on-chain</b>.' + dest;
-        if (submit) submit.textContent = 'Pagar com Solana e creditar';
+          '</span>. Ao clicar em <b>Depositar</b>, a <b>' + esc(solName) + '</b> abre para você <b>aprovar a transação</b>.' + dest;
+        if (submit) submit.textContent = 'Depositar com ' + solName;
       } else {
-        if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) +
-          '</span> · <b style="color:var(--green,#10b981)">depósito com aprovação automática</b>.' + dest;
+        if (st) st.innerHTML = 'Carteira conectada: <b>' + esc(w.type) + '</b> · <span class="mono">' + esc(w.address) + '</span>.' + dest;
         if (submit) submit.textContent = 'Aprovar depósito e creditar';
       }
       if (hash) hash.required = false;
     } else {
       if (kind === 'sol') {
-        if (st) st.textContent = 'Conecte a Phantom ou a Solflare no passo 2 para pagar em SOL. O valor em USD é convertido e verificado na blockchain antes de creditar.';
-        if (submit) submit.textContent = 'Conectar Solana e pagar';
+        if (!solKey) {
+          if (st) st.textContent = 'Nenhuma carteira Solana está habilitada no momento. Use o hash da transferência no passo 2.';
+          if (submit) submit.textContent = 'Enviar para validação';
+          if (hash) hash.required = true;
+        } else {
+          if (st) st.innerHTML = 'Digite o valor e clique em <b>Depositar</b>: a <b>' + esc(solName) + '</b> abre para você <b>aprovar a transação</b>. O valor em USD é convertido em SOL e verificado na blockchain antes de creditar — nada é cobrado sem a sua aprovação.';
+          if (submit) submit.textContent = 'Depositar com ' + solName;
+          if (hash) hash.required = false;
+        }
       } else {
         if (st) st.textContent = 'Nenhuma carteira conectada. Sem carteira, o depósito fica pendente até o hash ser validado pelo admin.';
         if (submit) submit.textContent = 'Enviar para validação';
+        if (hash) hash.required = true;
       }
-      if (hash) hash.required = (kind !== 'sol');
     }
     if (dc) dc.style.display = w ? '' : 'none';
   }
@@ -813,13 +871,27 @@
     el.innerHTML = '≈ <b>' + (amt / p).toFixed(6) + ' SOL</b> (SOL = $' + p.toFixed(2) + ')';
   }
   async function ensureSolanaProvider() {
-    var key = solanaProvider('phantom') ? 'phantom' : (solanaProvider('solflare') ? 'solflare' : null);
-    if (!key) { showWalletInstall('phantom'); throw new Error('Instale a Phantom ou a Solflare para pagar em Solana.'); }
-    var provider = solanaProvider(key);
-    var r;
-    try { r = await provider.connect(); }
-    catch (e) { throw new Error('conexão da carteira cancelada'); }
-    var pkObj = r && (r.publicKey || r.address) ? (r.publicKey || r.address) : provider.publicKey;
+    var order = [];
+    if (walletEnabled('solflare')) order.push('solflare');
+    if (walletEnabled('phantom')) order.push('phantom');
+    if (!order.length) throw new Error('Nenhuma carteira Solana está habilitada no momento.');
+    var key = null, provider = null;
+    for (var i = 0; i < order.length; i++) {
+      provider = solanaProvider(order[i]);
+      if (provider) { key = order[i]; break; }
+    }
+    if (!key) {
+      var first = order[0];
+      showWalletInstall(first);
+      throw new Error('Instale a ' + (WALLET_INSTALL[first] ? WALLET_INSTALL[first].name : first) + ' para pagar em Solana.');
+    }
+    var r = null;
+    // Reusa a conexao existente; se ainda nao houver, abre a carteira para autorizar.
+    if (!provider.publicKey || provider.isConnected === false) {
+      try { r = await provider.connect(); }
+      catch (e) { throw new Error('conexão da carteira cancelada'); }
+    }
+    var pkObj = (r && (r.publicKey || r.address)) || provider.publicKey;
     var pk = pkObj ? (pkObj.toString ? pkObj.toString() : String(pkObj)) : '';
     if (!pk) throw new Error('a carteira não retornou o endereço');
     await persistWalletServer('solana', pk);
@@ -882,7 +954,7 @@
       var address = String(accs[0]).trim();
       await persistWalletServer('evm', address);
       saveWallet(type, address);
-      toast(type + ' conectada! Depósito passa a ser aprovado automaticamente.', 'success');
+      toast(type + ' conectada!', 'success');
     } catch (err) { toast('Falha ao conectar: ' + (err && err.message ? err.message : err), 'error'); }
   }
   function solanaProvider(key) {
@@ -901,6 +973,7 @@
   }
   function connectWalletByKey(key) {
     hideWalletInstall();
+    if (!walletEnabled(key)) { toast('Esta carteira está desabilitada no momento.', 'error'); return; }
     if (key === 'metamask') {
       if (!window.ethereum) { showWalletInstall('metamask'); return; }
       connectEVM(window.ethereum, 'MetaMask');
@@ -917,7 +990,7 @@
         if (!pk) throw new Error('carteira não retornou o endereço');
         await persistWalletServer('solana', pk);
         saveWallet(key === 'phantom' ? 'Phantom' : 'Solflare', pk);
-        toast((key === 'phantom' ? 'Phantom' : 'Solflare') + ' conectada! Depósito passa a ser aprovado automaticamente.', 'success');
+        toast((key === 'phantom' ? 'Phantom' : 'Solflare') + ' conectada! Ao clicar em Depositar, a carteira abre para você aprovar a transação.', 'success');
       } catch (err) { toast('Falha ao conectar: ' + (err && err.message ? err.message : err), 'error'); }
     })();
   }
@@ -1114,6 +1187,7 @@
   bindForms();
   bindCopy();
   bindWallet();
+  loadPublicSettings();
   paintWallet();
   paintSimNotice();
   /* ?view=xxx → normaliza para hash na primeira carga */

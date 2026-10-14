@@ -21,7 +21,12 @@ const DEFAULT_SETTINGS = {
   secondary_color: '#8b5cf6',
   hero_title: 'Planos de rendimento',
   support_telegram: 'https://t.me/nexora_suporte',
-  simulation_mode: '0'
+  simulation_mode: '0',
+  // Carteiras aceitas no deposito (admin pode ligar/desligar). Por enquanto,
+  // somente a Solflare fica habilitada.
+  wallet_solflare_enabled: '1',
+  wallet_phantom_enabled: '0',
+  wallet_metamask_enabled: '0'
 };
 
 const SEED_PLANS = [
