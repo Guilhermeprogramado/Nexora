@@ -26,7 +26,10 @@ const DEFAULT_SETTINGS = {
   // somente a Solflare fica habilitada.
   wallet_solflare_enabled: '1',
   wallet_phantom_enabled: '0',
-  wallet_metamask_enabled: '0'
+  wallet_metamask_enabled: '0',
+  // Rede dos pagamentos Solana: 'devnet' (teste, SOL sem valor) ou
+  // 'mainnet-beta' (SOL real). Controlado no painel admin.
+  solana_network: 'devnet'
 };
 
 const SEED_PLANS = [

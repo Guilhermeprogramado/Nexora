@@ -752,8 +752,8 @@
 
   /* ---------- SETTINGS ---------- */
   var KNOWN = ['site_name', 'support_telegram', 'hero_title', 'primary_color', 'secondary_color', 'total_invested', 'running_days'];
-  var WALLET_KEYS = ['wallet_solflare_enabled', 'wallet_phantom_enabled', 'wallet_metamask_enabled'];
-  var WALLET_DEFAULTS = { wallet_solflare_enabled: true, wallet_phantom_enabled: false, wallet_metamask_enabled: false };
+  var WALLET_KEYS = ['wallet_solflare_enabled', 'wallet_phantom_enabled', 'wallet_metamask_enabled', 'solana_network'];
+  var WALLET_DEFAULTS = { wallet_solflare_enabled: true, wallet_phantom_enabled: false, wallet_metamask_enabled: false, solana_network: 'devnet' };
   function settingOn(v, dflt) {
     if (v == null || v === '') return !!dflt;
     var s = String(v).trim().toLowerCase();

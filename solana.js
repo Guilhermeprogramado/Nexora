@@ -186,23 +186,41 @@ async function readPortfolio(ownerPubkey) {
 
 // ------------------------------------------------------ Pagamentos (deposito)
 
-// O RPC de LEITURA (Jito/Kamino/portfolio) e mainnet. Os PAGAMENTOS usam um RPC
-// proprio, configuravel por SOLANA_PAY_RPC_URL. Em producao, sem essa variavel, cai
-// no SOLANA_RPC_URL e por fim na mainnet publica -> recebe SOL real. Para testar
-// sem dinheiro real, defina SOLANA_PAY_RPC_URL=https://api.devnet.solana.com.
-const PAY_RPC_URL = process.env.SOLANA_PAY_RPC_URL
+// O RPC de LEITURA (Jito/Kamino/portfolio) e sempre mainnet. Os PAGAMENTOS usam
+// a rede escolhida pelo ADMIN (settings.solana_network no banco): 'devnet'
+// (padrao, para testes sem dinheiro real) ou 'mainnet-beta' (SOL real). Na
+// mainnet o endpoint e configuravel por SOLANA_PAY_RPC_URL (senao SOLANA_RPC_URL
+// e por fim a mainnet publica).
+const MAINNET_PAY_RPC_URL = process.env.SOLANA_PAY_RPC_URL
   || process.env.SOLANA_RPC_URL
   || 'https://api.mainnet-beta.solana.com';
-let payConn = null;
-function payConnection() {
-  if (!payConn) payConn = new Connection(PAY_RPC_URL, 'confirmed');
-  return payConn;
+const PAY_RPCS = {
+  'devnet': 'https://api.devnet.solana.com',
+  'testnet': 'https://api.testnet.solana.com',
+  'mainnet-beta': MAINNET_PAY_RPC_URL
+};
+// Rede de pagamento padrao quando o admin nao definiu nada no banco.
+const RAW_DEFAULT_NET = String(process.env.SOLANA_PAY_NETWORK || 'devnet').trim().toLowerCase();
+const DEFAULT_PAY_NETWORK = (RAW_DEFAULT_NET === 'mainnet' || RAW_DEFAULT_NET === 'mainnet-beta')
+  ? 'mainnet-beta'
+  : (RAW_DEFAULT_NET === 'testnet' ? 'testnet' : 'devnet');
+function normalizeNetwork(n) {
+  const v = String(n || '').trim().toLowerCase();
+  if (v === 'mainnet' || v === 'mainnet-beta') return 'mainnet-beta';
+  if (v === 'testnet') return 'testnet';
+  return 'devnet';
 }
-function payNetwork() {
-  const u = String(PAY_RPC_URL).toLowerCase();
-  if (u.includes('devnet')) return 'devnet';
-  if (u.includes('testnet')) return 'testnet';
-  return 'mainnet-beta';
+function payRpcUrl(network) {
+  return PAY_RPCS[normalizeNetwork(network)] || PAY_RPCS['devnet'];
+}
+const payConns = {};
+function payConnection(network) {
+  const url = payRpcUrl(network);
+  if (!payConns[url]) payConns[url] = new Connection(url, 'confirmed');
+  return payConns[url];
+}
+function payNetwork(network) {
+  return normalizeNetwork(network);
 }
 
 // Preco do SOL em USD de fonte real (CoinGecko). Retorna null se indisponivel:
@@ -228,9 +246,9 @@ async function getSolPriceUsd() {
 // Verifica ON-CHAIN que `signature` transferiu >= minLamports de `from` para
 // `to`. Confirma em `confirmed` e tenta algumas vezes (propagacao demora).
 // O saldo so pode ser creditado se isto retornar ok:true.
-async function verifySolTransfer({ signature, from, to, minLamports, attempts = 8, delayMs = 1500 }) {
+async function verifySolTransfer({ signature, from, to, minLamports, network, attempts = 8, delayMs = 1500 }) {
   if (!signature) return { ok: false, error: 'assinatura ausente' };
-  const c = payConnection();
+  const c = payConnection(network);
   for (let i = 0; i < attempts; i++) {
     let tx = null;
     try {
@@ -276,7 +294,8 @@ async function verifySolTransfer({ signature, from, to, minLamports, attempts = 
 
 module.exports = {
   RPC_URL,
-  PAY_RPC_URL,
+  MAINNET_PAY_RPC_URL,
+  DEFAULT_PAY_NETWORK,
   LAMPORTS_PER_SOL,
   PublicKey,
   JITO,
@@ -285,6 +304,8 @@ module.exports = {
   connection,
   payConnection,
   payNetwork,
+  normalizeNetwork,
+  payRpcUrl,
   getSolPriceUsd,
   verifySolTransfer,
   readJitoPool,

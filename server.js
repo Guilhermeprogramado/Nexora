@@ -218,6 +218,16 @@ async function isSimulation() {
   }
 }
 
+// Rede de pagamento Solana escolhida no admin: 'devnet' (teste, SOL sem valor)
+// ou 'mainnet-beta' (SOL real). Cai no padrao do ambiente se o admin nao definiu.
+async function solanaPayNetwork() {
+  try {
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'solana_network'").get();
+    if (row && row.value) return solana.normalizeNetwork(row.value);
+  } catch (err) {}
+  return solana.DEFAULT_PAY_NETWORK;
+}
+
 function maskUsername(name) {
   if (!name || typeof name !== 'string') return 'Us***o';
   if (name.length <= 3) return name[0] + '***';
@@ -736,7 +746,9 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
     // Gateway Solana: exige pagamento real VERIFICADO on-chain ANTES de creditar.
     // Se a transacao nao existir/confirmar, NADA entra no saldo.
     let verifiedSolana = null;
+    let payNet = solana.DEFAULT_PAY_NETWORK;
     if (solanaGateway) {
+      payNet = await solanaPayNetwork();
       if (!walletAddr) {
         return res.status(400).json({ error: 'Conecte sua carteira Solana antes de pagar.' });
       }
@@ -759,7 +771,7 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
       }
       const expected = Math.floor((amt / price) * solana.LAMPORTS_PER_SOL);
       const minLamports = Math.floor(expected * 0.95);
-      const check = await solana.verifySolTransfer({ signature: tx, from: walletAddr, to: dest, minLamports });
+      const check = await solana.verifySolTransfer({ signature: tx, from: walletAddr, to: dest, minLamports, network: payNet });
       if (!check.ok) {
         return res.status(400).json({ error: 'Pagamento nao confirmado: ' + check.error + '. O saldo nao foi creditado.' });
       }
@@ -792,7 +804,7 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
       const dep = await tdb.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
       if (auto) {
         const detail = verifiedSolana
-          ? `Deposito #${dep.id} confirmado on-chain (Solana ${solana.payNetwork()}, ${verifiedSolana.lamports} lamports) — saldo liberado`
+          ? `Deposito #${dep.id} confirmado on-chain (Solana ${solana.payNetwork(payNet)}, ${verifiedSolana.lamports} lamports) — saldo liberado`
           : `Deposito #${dep.id} aprovado automaticamente (carteira ` + req.user.wallet_chain + `) — saldo liberado`;
         await creditDepositApproval(tdb, dep, detail);
       } else {
@@ -1678,12 +1690,13 @@ app.get('/api/solana/portfolio', solLimiter, async (req, res) => {
 
 // Cotacao real do SOL para o front converter USD -> SOL.
 app.get('/api/solana/price', solLimiter, async (req, res) => {
+  const net = await solanaPayNetwork();
   try {
     const usd = await solana.getSolPriceUsd();
-    return res.json({ usd, network: solana.payNetwork(), available: Number.isFinite(usd) });
+    return res.json({ usd, network: solana.payNetwork(net), available: Number.isFinite(usd) });
   } catch (err) {
     console.error('sol price:', err.message);
-    return res.json({ usd: null, network: solana.payNetwork(), available: false });
+    return res.json({ usd: null, network: solana.payNetwork(net), available: false });
   }
 });
 
@@ -1714,9 +1727,10 @@ app.post('/api/solana/pay-intent', authRequired, solLimiter, async (req, res) =>
     }
     const lamports = Math.floor((amt / price) * solana.LAMPORTS_PER_SOL);
     if (lamports <= 0) return res.status(400).json({ error: 'Valor muito baixo.' });
+    const payNet = await solanaPayNetwork();
     return res.json({
       ok: true,
-      network: solana.payNetwork(),
+      network: solana.payNetwork(payNet),
       destination: dest,
       amount_usd: accrual.round2(amt),
       sol_price: price,
@@ -1750,7 +1764,8 @@ app.post('/api/solana/rpc', authRequired, solLimiter, async (req, res) => {
       method,
       params: Array.isArray(body.params) ? body.params : []
     };
-    const r = await fetch(solana.PAY_RPC_URL, {
+    const rpcNet = await solanaPayNetwork();
+    const r = await fetch(solana.payRpcUrl(rpcNet), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
