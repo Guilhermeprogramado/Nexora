@@ -10,6 +10,7 @@ nexora.db-wal
 login.json
 usuario.txt
 .env
+.ftp.env
 
 # Logs e temporários
 *.log
