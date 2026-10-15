@@ -345,6 +345,53 @@ async function initDatabase(db) {
     }
   }
 
+  // Enable Row Level Security (RLS) and minimal policies
+  const tablesRls = [
+    'users','plans','gateways','deposits','withdrawals','transactions','positions','settings','accruals','company_results'
+  ];
+  for (const t of tablesRls) {
+    await db.exec(`DO $$
+    BEGIN
+      BEGIN
+        ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;
+      EXCEPTION WHEN undefined_table OR duplicate_object THEN
+        NULL;
+      END;
+    END $$;`);
+  }
+  // public read for settings/gateways/plans
+  await db.exec(`DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='settings' AND policyname='settings_read_public')
+    THEN
+      CREATE POLICY settings_read_public ON settings FOR SELECT USING (true);
+    END IF;
+  END $$;`);
+  await db.exec(`DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='gateways' AND policyname='gateways_read_public')
+    THEN
+      CREATE POLICY gateways_read_public ON gateways FOR SELECT USING (true);
+    END IF;
+  END $$;`);
+  await db.exec(`DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='plans' AND policyname='plans_read_public')
+    THEN
+      CREATE POLICY plans_read_public ON plans FOR SELECT USING (true);
+    END IF;
+  END $$;`);
+  // service_role full access
+  for (const t of tablesRls) {
+    await db.exec(`DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='${t}' AND policyname='${t}_service_all')
+      THEN
+        CREATE POLICY ${t}_service_all ON ${t} FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+      END IF;
+    END $$;`);
+  }
+
   // Seed admin if missing
   const admin = await db
     .prepare('SELECT id FROM users WHERE username = ? OR email = ?')
