@@ -157,6 +157,22 @@ function makeAdapter(poolOrClient) {
   };
 }
 
+// Em serverless, cada instancia abre o proprio pool. O pooler do Supabase em
+// "session mode" (porta 5432) limita a ~15 clientes e estoura facil
+// (EMAXCONNSESSION). Normalizamos a URL do pooler para o "transaction mode"
+// (porta 6543 + pgbouncer), que e o modo recomendado para funcoes serverless.
+// Para forcar o modo sessao, defina PG_MODE=session.
+function normalizePgUrl(raw) {
+  if (!raw) return raw;
+  let u;
+  try { u = new URL(raw); } catch (e) { return raw; }
+  if (!/\.pooler\.supabase\.com$/i.test(u.hostname)) return raw;
+  if (String(process.env.PG_MODE || '').toLowerCase() === 'session') return raw;
+  if (!u.port || u.port === '5432') u.port = '6543';
+  if (!u.searchParams.has('pgbouncer')) u.searchParams.set('pgbouncer', 'true');
+  return u.toString();
+}
+
 function buildPool() {
   if (!DATABASE_URL) {
     throw new Error('Defina DATABASE_URL (Supabase Postgres) para rodar o Nexora.');
@@ -164,12 +180,15 @@ function buildPool() {
   const ssl = process.env.PGSSL === 'disable'
     ? false
     : { rejectUnauthorized: false };
+  const connectionString = normalizePgUrl(DATABASE_URL);
   const pool = new Pool({
-    connectionString: DATABASE_URL,
+    connectionString,
     ssl,
-    max: Number(process.env.PGPOOL_MAX || 5),
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 15000
+    // 1 conexao por instancia serverless evita esgotar o pooler.
+    max: Number(process.env.PGPOOL_MAX || 1),
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 15000,
+    allowExitOnIdle: true
   });
   pool.on('error', (err) => console.error('[pg] idle client error:', err.message));
   return pool;
