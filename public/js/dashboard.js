@@ -680,6 +680,35 @@
     if (walletEnabled('phantom')) return 'phantom';
     return null;
   }
+  // Rede dos pagamentos Solana definida pelo admin: 'devnet' | 'testnet' | 'mainnet-beta'.
+  function solPayNetwork() {
+    var v = state.settings ? state.settings.solana_network : null;
+    var s = String(v == null ? '' : v).trim().toLowerCase();
+    if (s === 'mainnet' || s === 'mainnet-beta') return 'mainnet-beta';
+    if (s === 'testnet') return 'testnet';
+    return 'devnet';
+  }
+  function solNetLabel(net) {
+    var n = String(net == null ? '' : net).toLowerCase();
+    if (n === 'mainnet' || n === 'mainnet-beta') return 'Mainnet (SOL real)';
+    if (n === 'testnet') return 'Testnet (teste)';
+    return 'Devnet (teste)';
+  }
+  // Normaliza o que a carteira informar (ex.: 'mainnet', 'devnet', cluster) para a mesma nomenclatura.
+  function normalizeWalletNet(v) {
+    var s = String(v == null ? '' : v).toLowerCase();
+    if (!s || s.length > 40) return '';
+    if (s.indexOf('main') >= 0) return 'mainnet-beta';
+    if (s.indexOf('test') >= 0) return 'testnet';
+    if (s.indexOf('dev') >= 0) return 'devnet';
+    return '';
+  }
+  function showNetworkWarn(msg) {
+    var el = $('topNetworkWarn');
+    if (!el) return;
+    if (msg) { el.hidden = false; el.textContent = msg; }
+    else { el.hidden = true; el.textContent = ''; }
+  }
   function paintWalletGrid() {
     var map = { metamask: 'btnMetaMask', phantom: 'btnPhantom', solflare: 'btnSolflare' };
     var any = false;
@@ -777,9 +806,14 @@
     if (!g) { box.hidden = true; box.innerHTML = ''; return; }
     var addr = g.wallet_address || g.address || g.wallet || '';
     box.hidden = false;
+    var netLine = '';
+    if (walletKind(g.network) === 'sol') {
+      var pn = solPayNetwork();
+      netLine = '<br><span class="form-hint" style="color:#f0b90b">Rede de pagamento: <b>' + esc(solNetLabel(pn)) + '</b> — a carteira precisa estar na mesma rede.</span>';
+    }
     box.innerHTML = 'Rede: <b>' + esc(g.network || '—') + ' (' + esc(g.symbol || g.name || '') + ')</b>' +
       '<br>Endereço da plataforma: <b class="mono">' + esc(addr) + '</b>' +
-      '<br><span class="form-hint">' + esc(walletHint(g.network)) + '</span>';
+      '<br><span class="form-hint">' + esc(walletHint(g.network)) + '</span>' + netLine;
     var hid = $('topAddrValue');
     if (hid) hid.value = addr;
     paintWalletRecommend();
@@ -868,7 +902,7 @@
     el.textContent = 'Calculando…';
     var p = await fetchSolPrice();
     if (!p) { el.textContent = 'Cotação do SOL indisponível no momento.'; return; }
-    el.innerHTML = '≈ <b>' + (amt / p).toFixed(6) + ' SOL</b> (SOL = $' + p.toFixed(2) + ')';
+    el.innerHTML = '≈ <b>' + (amt / p).toFixed(6) + ' SOL</b> (SOL = $' + p.toFixed(2) + ') · Rede: <b>' + esc(solNetLabel(solPayNetwork())) + '</b>';
   }
   async function ensureSolanaProvider() {
     var order = [];
@@ -904,13 +938,30 @@
     var amount = $('topAmount') ? Number($('topAmount').value) : 0;
     if (!gateway || !isFinite(amount) || amount <= 0) { toast('Escolha a moeda/rede e o valor.', 'error'); return; }
     if (btn) btn.disabled = true;
+    showNetworkWarn('');
+    var wantNet = solPayNetwork();
+    var walletName = 'carteira';
     try {
       // 1) conecta a carteira Solana (abre a extensao, se necessario)
       var wallet = await ensureSolanaProvider();
+      walletName = (wallet.provider && wallet.provider.isPhantom) ? 'Phantom' : 'Solflare';
       // 2) o servidor valida o gateway e converte USD -> lamports (cotacao real)
       var intent = await api('/api/solana/pay-intent', { method: 'POST', body: { amount_usd: amount, gateway_id: gateway } });
       if (!intent || !intent.lamports) throw new Error('não foi possível preparar o pagamento');
-      // 3) monta a transacao; o navegador fala com a rede via proxy do servidor
+      wantNet = normalizeWalletNet(intent.network) || wantNet;
+      // 3) confere a rede da carteira (quando ela informa) antes de pedir aprovacao
+      var curNet = normalizeWalletNet(wallet.provider && (wallet.provider.network || wallet.provider.cluster));
+      if (curNet && curNet !== wantNet) {
+        showNetworkWarn('Sua carteira está em ' + solNetLabel(curNet) + ', mas este depósito é em ' + solNetLabel(wantNet) +
+          '. Abra a ' + walletName + ' → Configurações → Rede, mude para ' + solNetLabel(wantNet) + ' e tente novamente.');
+        toast('Rede da carteira diferente da rede do depósito.', 'error');
+        return;
+      }
+      // Se a carteira permitir trocar de rede por codigo, tenta alinhar automaticamente.
+      if (!curNet && wallet.provider && typeof wallet.provider.changeNetwork === 'function') {
+        try { await wallet.provider.changeNetwork(wantNet); } catch (e) {}
+      }
+      // 4) monta a transacao; o navegador fala com a rede via proxy do servidor
       var web3 = await import('https://esm.sh/@solana/web3.js@1');
       var rpcFetch = function (url, opts) {
         var body = (opts && opts.body) ? opts.body : '{}';
@@ -925,13 +976,13 @@
       tx.feePayer = from;
       var bh = await conn.getLatestBlockhash('confirmed');
       tx.recentBlockhash = bh.blockhash;
-      // 4) assina na carteira e envia. Se o usuario recusar, NADA e cobrado.
+      // 5) assina na carteira e envia. Se o usuario recusar, NADA e cobrado.
       var signed = await wallet.provider.signTransaction(tx);
       var signedTx = (signed && signed.serialize) ? signed : (signed && signed.signedTransaction);
       if (!signedTx || !signedTx.serialize) throw new Error('a carteira não retornou a transação assinada');
       var signature = await conn.sendRawTransaction(signedTx.serialize(), { skipPreflight: false });
       toast('Transação enviada. Confirmando na blockchain…', 'success');
-      // 5) registra o deposito; o servidor verifica on-chain ANTES de creditar.
+      // 6) registra o deposito; o servidor verifica on-chain ANTES de creditar.
       var dep = await api('/api/my/deposits', { method: 'POST', body: { amount: amount, gateway_id: gateway, tx_hash: signature } });
       if (dep && dep.status === 'active') {
         toast('Pagamento confirmado! Saldo de ' + money(amount) + ' creditado.', 'success');
@@ -943,7 +994,14 @@
       paintSolConvert();
     } catch (err) {
       // Erro/cancelamento em qualquer etapa: o saldo NAO e creditado.
-      toast('Pagamento não concluído: ' + (err && err.message ? err.message : err), 'error');
+      var msg = err && err.message ? err.message : String(err);
+      if (/incompatibilidade de rede|rede.*(devnet|mainnet|testnet)|(devnet|mainnet|testnet).*rede|network|cluster/i.test(msg)) {
+        showNetworkWarn('Sua carteira parece estar em outra rede. Abra a ' + walletName + ' → Configurações → Rede, mude para ' +
+          solNetLabel(wantNet) + ' e tente novamente.');
+        toast('Rede da carteira diferente da rede do depósito.', 'error');
+      } else {
+        toast('Pagamento não concluído: ' + msg, 'error');
+      }
     } finally { if (btn) btn.disabled = false; }
   }
   async function connectEVM(provider, type) {
