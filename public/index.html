@@ -4,8 +4,8 @@
 <script>if(location.protocol==="http:"){location.replace("https://"+location.host+location.pathname+location.search);}</script>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Nexora — Rendimento DeFi na Solana (SOL e USDT)</title>
-<meta name="description" content="Nexora: painel de dados on-chain de rendimento DeFi na Solana. Staking de SOL via Jito e vaults USDT via Kamino. Sem custodia, sem promessa de retorno."/>
+<title>Nexora — Staking multi-moeda com rendimentos diários</title>
+<meta name="description" content="Nexora: plataforma de staking com 10 moedas (BTC, ETH, SOL, XRP, BCH, BNB, LTC, DOGE, TRX, USDT). Deposite na sua moeda, aplique em planos de staking e acompanhe rendimentos diários."/>
 <link rel="stylesheet" href="./css/style.css"/>
 <link rel="icon" type="image/svg+xml" href="./favicon.svg"/>
 <link rel="apple-touch-icon" href="./favicon.svg"/>
@@ -14,7 +14,7 @@
 
 <header class="header">
   <div class="container header-inner">
-    <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora<small>DeFi on Solana</small></span></a>
+      <a class="brand" href="./index.html"><span class="brand-mark">N</span><span>Nexora<small>Staking Multi-Moeda</small></span></a>
     <nav class="nav">
       <a href="#sobre" data-i18n="nav_about">Sobre</a>
       <a href="#estrategias">Protocolos</a>
@@ -50,17 +50,17 @@
 <section class="hero">
   <div class="container hero-grid">
     <div>
-      <span class="hero-badge"><span class="pulse"></span> <span data-i18n="hero_badge">Protocolos DeFi reais, na sua carteira</span></span>
-      <h1 data-i18n="hero_title">Rendimento DeFi <span class="grad-text">na Solana</span> sem intermediar seu dinheiro</h1>
-      <p class="lead" data-i18n="hero_sub">A Nexora mostra os dados on-chain reais do staking de SOL (Jito) e dos vaults USDT (Kamino). Você conecta a Phantom e opera direto no protocolo — a Nexora nunca recebe seus fundos.</p>
+      <span class="hero-badge"><span class="pulse"></span> <span data-i18n="hero_badge">10 moedas · Staking multi-moeda</span></span>
+      <h1 data-i18n="hero_title">Staking multi-moeda <span class="grad-text">em um só painel</span></h1>
+      <p class="lead" data-i18n="hero_sub">Deposite em BTC, ETH, SOL, XRP, BCH, BNB, LTC, DOGE, TRX ou USDT, aplique em planos de staking com rendimentos diários e acompanhe tudo no seu painel.</p>
       <div class="hero-ctas">
-        <a class="btn btn-primary" href="./yield.html">Ver rendimento real</a>
-        <a class="btn btn-ghost" href="#rendimento">Simular composição</a>
+        <a class="btn btn-primary" href="./signup.html">Criar conta</a>
+        <a class="btn btn-ghost" href="#planos">Ver planos</a>
       </div>
       <div class="hero-mini">
-        <span>✔ APY <strong>retroativa</strong>, nunca garantida</span>
-        <span>✔ Custódia <strong>100% sua</strong></span>
-        <span>✔ Risco de <strong>smart contract</strong> existe</span>
+        <span>✔ <strong>10 moedas</strong> suportadas</span>
+        <span>✔ Rendimentos <strong>diários</strong></span>
+        <span>✔ Saldo por moeda, sem conversão forçada</span>
       </div>
     </div>
     <div class="hero-card">
@@ -150,25 +150,26 @@
 
 <!-- MOEDAS -->
   <section id="moedas">
-    <div class="container">
-      <span class="section-kicker">Depósitos</span>
-      <h2 class="section-title">Moedas suportadas</h2>
-      <div class="coins" id="coinsGrid">
-        <!-- preenchido por JS via /api/crypto/prices -->
-      </div>
+  <div class="container">
+    <span class="section-kicker">Moedas</span>
+    <h2 class="section-title">10 moedas em um só lugar</h2>
+    <p class="section-sub">Deposite na moeda que preferir. Seus saldos, investimentos e saques ficam sempre na mesma moeda.</p>
+    <div class="coins" id="coinsGrid">
+      <!-- preenchido por JS via /api/crypto/prices -->
     </div>
+  </div>
   </section>
 
 <!-- SOBRE -->
 <section id="sobre" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
   <div class="container">
-    <span class="section-kicker">Sobre o projeto</span>
-    <h2 class="section-title">O que a Nexora faz — e o que não faz</h2>
-    <p class="section-sub">Somos uma ferramenta de leitura de dados on-chain. Não operamos Strategies nem custodiamos recursos.</p>
+    <span class="section-kicker">Como funciona</span>
+    <h2 class="section-title">Staking em 3 passos</h2>
+    <p class="section-sub">Simples, direto e com saldo por moeda.</p>
     <div class="grid grid-3">
-      <div class="card"><div class="icon">🔍</div><h3>Lê a blockchain</h3><p>Consulta a pool do Jito e a API pública da Kamino para mostrar saldos, taxas e APYs reais.</p></div>
-      <div class="card violet"><div class="icon">🔗</div><h3>Conecta sua carteira</h3><p>A carteira Phantom só é usada para <em>ler</em> saldos. Site nenhum recebe sua seed phrase.</p></div>
-      <div class="card"><div class="icon">🚫</div><h3>Não promete retorno</h3><p>Não temos plano com taxa fixa. Rentabilidade passada não é garantia de resultado futuro.</p></div>
+      <div class="card"><div class="icon">1</div><h3>Deposite</h3><p>Escolha uma das 10 moedas, envie para o endereço indicado e aguarde a validação no painel.</p></div>
+      <div class="card violet"><div class="icon">2</div><h3>Invista em plano</h3><p>Selecione o plano de staking e a moeda com saldo disponível. O investimento debita na hora.</p></div>
+      <div class="card"><div class="icon">3</div><h3>Receba rendimentos</h3><p>Receba créditos diários no mesmo ativo. Ao final do ciclo, o principal fica liberado para saque.</p></div>
     </div>
   </div>
 </section>
@@ -176,12 +177,12 @@
 <!-- VANTAGENS -->
 <section id="vantagens">
   <div class="container">
-    <span class="section-kicker">Por que a Nexora</span>
-    <h2 class="section-title">Princípios do projeto</h2>
+    <span class="section-kicker">Por que Nexora</span>
+    <h2 class="section-title">Multi-moeda, direto ao ponto</h2>
     <div class="grid grid-3" style="margin-top:18px">
-      <div class="card"><div class="icon">⚡</div><h3>Dado verificável</h3><p>Cada número exibido tem endereço de contrato ou endpoint público que você pode conferir.</p></div>
-      <div class="card violet"><div class="icon">🧠</div><h3>Sem número inventado</h3><p>Se a RPC ou a API falhar, a tela mostra "indisponível". Nunca preenchemos com estimativa.</p></div>
-      <div class="card"><div class="icon">🔁</div><h3>Você opera</h3><p>Depósito e resgate acontecem no protocolo, na sua carteira. A Nexora não toca no seu dinheiro.</p></div>
+      <div class="card"><div class="icon">💱</div><h3>10 moedas</h3><p>BTC, ETH, SOL, XRP, BCH, BNB, LTC, DOGE, TRX e USDT em um único painel.</p></div>
+      <div class="card violet"><div class="icon">🎯</div><h3>Sem conversão forçada</h3><p>Seu saldo fica na moeda depositada. Investimentos, rendimentos e saques são nessa mesma moeda.</p></div>
+      <div class="card"><div class="icon">📆</div><h3>Rendimentos diários</h3><p>Créditos diários conforme a taxa do plano. Principal liberado ao final do ciclo para saque.</p></div>
     </div>
   </div>
 </section>
@@ -189,12 +190,11 @@
 <!-- STATS -->
 <section id="stats" style="background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)">
   <div class="container">
-    <span class="section-kicker">Transparência</span>
-    <h2 class="section-title">Números reais</h2>
-    <p class="section-sub">
-      Todos os números abaixo vêm do banco de dados desta instalação e da blockchain.
-      Enquanto não houver operação, os totais ficam em zero — não publicamos histórico inventado.
-    </p>
+      <span class="section-kicker">Transparência</span>
+      <h2 class="section-title">Números do sistema</h2>
+      <p class="section-sub">
+        Totais calculados a partir do banco desta instalação.
+      </p>
     <div class="stats-grid" id="statsGrid">
       <div class="stat"><b id="stUsers">—</b><span>Contas cadastradas</span></div>
       <div class="stat"><b id="stVolume">—</b><span>Depósitos ativos</span></div>
