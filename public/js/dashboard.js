@@ -375,6 +375,71 @@
     return fb;
   }
 
+  function getAssetBal(sym) {
+    if (!state.me || !Array.isArray(state.me.balances)) return { amount: 0, pending: 0, available: 0, usd_price: null };
+    var s = String(sym || '').toUpperCase();
+    for (var i = 0; i < state.me.balances.length; i++) {
+      if (String(state.me.balances[i].asset).toUpperCase() === s) return state.me.balances[i];
+    }
+    return { amount: 0, pending: 0, available: 0, usd_price: null };
+  }
+
+  function paintDepositAssets() {
+    var sel = $('depAsset');
+    if (!sel) return;
+    var bals = (state.me && Array.isArray(state.me.balances)) ? state.me.balances : [];
+    if (!bals.length) {
+      sel.innerHTML = '<option value="">Sem saldo por moeda</option>';
+      var av = $('depAssetAvail'); if (av) av.textContent = 'Saldo disponivel: —';
+      var hu = $('depUsdHint'); if (hu) hu.textContent = 'Equivale a: US$ —';
+      return;
+    }
+    var html = bals.map(function (b) {
+      return '<option value="' + esc(b.asset) + '">' + esc(b.asset) + ' · disponivel ' + Number(b.available || 0) + '</option>';
+    }).join('');
+    sel.innerHTML = html;
+    updateDepAssetUI();
+  }
+
+  function updateDepAssetUI() {
+    var sym = $('depAsset') && $('depAsset').value;
+    var b = getAssetBal(sym);
+    var av = $('depAssetAvail');
+    if (av) av.textContent = 'Saldo disponivel: ' + Number(b.available || 0) + ' ' + (sym || '');
+    var amtEl = $('depAmount');
+    var amt = amtEl && Number(amtEl.value);
+    var hu = $('depUsdHint');
+    if (!hu) return;
+    if (isFinite(amt) && amt > 0 && Number(b.usd_price) > 0) {
+      hu.textContent = 'Equivale a: US$ ' + money(amt * Number(b.usd_price));
+    } else {
+      hu.textContent = 'Equivale a: US$ —';
+    }
+  }
+
+  function paintWithdrawAssets() {
+    var sel = $('wdAsset');
+    if (!sel) return;
+    var bals = (state.me && Array.isArray(state.me.balances)) ? state.me.balances : [];
+    if (!bals.length) {
+      sel.innerHTML = '<option value="">Sem saldo por moeda</option>';
+      var av = $('wdAssetAvail'); if (av) av.textContent = 'Disponivel: —';
+      return;
+    }
+    var html = bals.map(function (b) {
+      return '<option value="' + esc(b.asset) + '">' + esc(b.asset) + ' · ' + Number(b.available || 0) + ' disponivel</option>';
+    }).join('');
+    sel.innerHTML = html;
+    updateWithdrawAssetUI();
+  }
+
+  function updateWithdrawAssetUI() {
+    var sym = $('wdAsset') && $('wdAsset').value;
+    var b = getAssetBal(sym);
+    var av = $('wdAssetAvail');
+    if (av) av.textContent = 'Disponivel: ' + Number(b.available || 0) + ' ' + (sym || '');
+  }
+
   /* ---------- /api/me ---------- */
   async function loadMe() {
     try {
@@ -422,7 +487,22 @@
       } else {
         try { localStorage.removeItem('nexora_wallet'); } catch (e) {}
       }
-      paintWallet();
+      var balRows = Array.isArray(u.balances) ? u.balances : [];
+      var ab = $('assetBalancesBody');
+      if (ab) {
+        if (!balRows.length) {
+          ab.innerHTML = '<tr class="empty-row"><td colspan="4">Sem saldos por moeda.</td></tr>';
+        } else {
+          ab.innerHTML = balRows.map(function (b) {
+            var amt = Number(b.available !== undefined ? b.available : b.amount) || 0;
+            var pend = Number(b.pending) || 0;
+            var usd = (Number(b.usd_price) > 0) ? money(amt * Number(b.usd_price)) : '—';
+            return '<tr><td><b>' + esc(b.asset) + '</b></td><td>' + amt + '</td><td>' + pend + '</td><td class="muted">' + usd + '</td></tr>';
+          }).join('');
+        }
+      }
+      paintDepositAssets();
+      paintWithdrawAssets();
       if (code) {
         var link = 'https://site/?ref=' + code;
         var r1 = $('refLink'); if (r1) r1.value = link;
@@ -483,17 +563,30 @@
   /* ---------- lists ---------- */
   function rowDeposit(d) {
     var plan = esc(pick(d, ['plan_name', 'plan', 'planName'], 'Saldo'));
-    var gw = esc(pick(d, ['gateway', 'gateway_name', 'gateway_symbol', 'method'], '—'));
-    return '<tr><td><b>' + plan + '</b></td><td>' + money(pick(d, ['amount', 'value'], 0)) + '</td><td>' + gw + '</td>' +
+    var gw = esc(pick(d, ['gateway_symbol', 'gateway', 'gateway_name', 'method'], '—'));
+    var asset = esc(String(pick(d, ['asset'], '') || gw || '—').toUpperCase());
+    var amt = pick(d, ['amount_asset', 'amount_asset_units'], null);
+    if (amt === null || amt === undefined) amt = pick(d, ['amount', 'value'], 0);
+    return '<tr><td><b>' + plan + '</b></td><td>' + esc(amt) + ' ' + asset + '</td><td>' + gw + '</td>' +
       '<td>' + statusPill(pick(d, ['status'], 'pending')) + '</td><td class="muted">' + fmtDate(pick(d, ['created_at', 'createdAt', 'date'], '')) + '</td></tr>';
   }
   function rowTx(t) {
     var type = String(pick(t, ['type', 'kind'], 'deposit')).toLowerCase();
     var label = type.indexOf('with') >= 0 ? '<span class="pill sell">Saque</span>'
-      : type.indexOf('invest') >= 0 ? '<span class="pill buy">Investimento</span>'
+      : type.indexOf('invest') >= 0 ? '<span class="pill buy">Staking</span>'
       : '<span class="pill buy">Depósito</span>';
-    return '<tr><td>' + label + '</td><td>' + money(pick(t, ['amount', 'value'], 0)) + '</td>' +
-      '<td>' + statusPill(pick(t, ['status'], 'pending')) + '</td><td class="muted">' + fmtDate(pick(t, ['created_at', 'createdAt', 'date'], '')) + '</td></tr>';
+    var asset = esc(String(pick(t, ['asset'], '') || '').toUpperCase());
+    var amt = pick(t, ['amount_asset'], null);
+    if (amt === null || amt === undefined || Number(amt) === 0 && type.indexOf('accrual') >= 0) {
+      var a2 = pick(t, ['amount_asset', 'amount'], 0);
+      amt = a2;
+    }
+    if (amt === null || amt === undefined) amt = pick(t, ['amount', 'value'], 0);
+    var show = asset ? (Number(amt) + ' ' + asset) : money(amt);
+    // Para rollover/legado sem asset, mostramos valor em USD
+    if (!asset || asset === 'UNDEFINED' || asset === 'NULL') show = money(pick(t, ['amount', 'value'], 0));
+    return '<tr><td>' + label + '</td><td>' + show + '</td>' +
+      '<td>' + statusPill(pick(t, ['status'], 'completed')) + '</td><td class="muted">' + fmtDate(pick(t, ['created_at', 'createdAt', 'date'], '')) + '</td></tr>';
   }
 
   async function loadRecent() {
@@ -1080,28 +1173,41 @@
     if (df) {
       var dpl = $('depPlan');
       if (dpl) dpl.addEventListener('change', paintPlanHint);
+      var das = $('depAsset');
+      if (das) das.addEventListener('change', function () { updateDepAssetUI(); });
+      var dam = $('depAmount');
+      if (dam) dam.addEventListener('input', updateDepAssetUI);
       df.addEventListener('submit', async function (e) {
         e.preventDefault();
         var btn = $('depSubmit');
         var plan = dpl && dpl.value;
-        var amount = $('depAmount') && Number($('depAmount').value);
+        var asset = das && das.value;
+        var amount = dam && Number(dam.value);
+        if (!asset) { toast('Selecione a moeda para investir.', 'error'); return; }
         if (!plan) { toast('Escolha um plano.', 'error'); return; }
         if (!isFinite(amount) || amount <= 0) { toast('Informe o valor.', 'error'); return; }
-        var cur = state.plans.filter(function (p) { return String(p.id) === String(plan); })[0];
-        if (cur && (amount < Number(cur.min_deposit) || amount > Number(cur.max_deposit))) {
-          toast('Valor fora da faixa do plano (' + money(cur.min_deposit) + ' — ' + money(cur.max_deposit) + ').', 'error');
+        var b = getAssetBal(asset);
+        if (amount > (Number(b.available) || 0) + 1e-12) {
+          toast('Saldo de ' + asset + ' insuficiente (disponível: ' + Number(b.available || 0) + '). Faça um depósito nessa moeda.', 'error');
           return;
         }
-        if (amount > (Number(state.balance) || 0)) {
-          toast('Saldo insuficiente (disponível: ' + money(state.balance) + '). Faça um depósito em "Adicionar Saldo" primeiro.', 'error');
+        var cur = state.plans.filter(function (p) { return String(p.id) === String(plan); })[0];
+        if (cur && Number(b.usd_price) > 0) {
+          var usd = amount * Number(b.usd_price);
+          if (usd < Number(cur.min_deposit) || usd > Number(cur.max_deposit)) {
+            toast('Valor equivale a US$ ' + money(usd) + ' — fora da faixa do plano (' + money(cur.min_deposit) + ' — ' + money(cur.max_deposit) + ').', 'error');
+            return;
+          }
+        } else if (cur && (amount < Number(cur.min_deposit) || amount > Number(cur.max_deposit))) {
+          toast('Valor fora da faixa do plano (' + money(cur.min_deposit) + ' — ' + money(cur.max_deposit) + ').', 'error');
           return;
         }
         if (btn) btn.disabled = true;
         try {
-          var body = { plan_id: plan, amount: amount };
+          var body = { plan_id: plan, amount: amount, asset: asset };
           await api('/api/my/invest', { method: 'POST', body: body });
-          toast('Investimento realizado! O rendimento começa a contar hoje.', 'success');
-          df.reset();
+          toast('Staking realizado! O rendimento começa a contar hoje.', 'success');
+          if (dam) dam.value = '';
           paintPlanHint();
           await loadPlans();
           await loadPositions();
@@ -1133,11 +1239,14 @@
       var amount = $('topAmount') && Number($('topAmount').value);
       var tx = $('topTxHash') && $('topTxHash').value.trim();
       var w = getWallet();
+      var gobj = sel;
+      var gsym = gobj && (gobj.symbol || gobj.code || gobj.name);
       if (!gateway || !isFinite(amount) || amount <= 0) { toast('Escolha a moeda/rede e o valor.', 'error'); return; }
       if (!w && (!tx || tx.length < 5)) { toast('Sem carteira conectada, cole o hash da transferência para validação.', 'error'); return; }
       if (btn) btn.disabled = true;
       try {
         var body = { amount: amount, gateway_id: gateway };
+        if (gsym) body.asset = String(gsym).toUpperCase();
         if (tx) body.tx_hash = tx;
         var dep = await api('/api/my/deposits', { method: 'POST', body: body });
         // O status real vem do servidor: com carteira salva o deposito entra
@@ -1145,7 +1254,7 @@
         if (dep && dep.status === 'active') {
           toast('Depósito aprovado automaticamente — saldo creditado!', 'success');
         } else {
-          toast('Depósito enviado! Saldo liberado após validação.', 'success');
+          toast('Depósito enviado! Saldo liberado após validação do admin.', 'success');
         }
         tf.reset(); loadRecent(); loadMe(); loadPositions();
       } catch (err) { toast('Erro: ' + err.message, 'error'); }
@@ -1156,20 +1265,24 @@
     if (wf) wf.addEventListener('submit', async function (e) {
       e.preventDefault();
       var btn = $('wdSubmit');
+      var asset = $('wdAsset') && $('wdAsset').value;
       var amount = $('wdAmount') && Number($('wdAmount').value);
       var gateway = $('wdGateway') && $('wdGateway').value;
       var wallet = $('wdWallet') && $('wdWallet').value.trim();
-        if (!isFinite(amount) || amount <= 0 || !gateway || !wallet) { toast('Preencha valor, gateway e carteira.', 'error'); return; }
-        if (state.withdrawUnlocked !== true) {
-          toast('Saque bloqueado até todo o saldo depositado concluir um investimento em plano.', 'error');
-          return;
-        }
-        if (amount > state.available) { toast('Saldo liberado insuficiente (disponível: ' + money(state.available) + ').', 'error'); return; }
+      if (!asset) { toast('Selecione a moeda.', 'error'); return; }
+      if (!isFinite(amount) || amount <= 0 || !gateway || !wallet) { toast('Preencha moeda, quantidade, gateway e carteira.', 'error'); return; }
+      if (state.withdrawUnlocked !== true) {
+        toast('Saque bloqueado até todo o saldo depositado concluir um investimento em plano.', 'error');
+        return;
+      }
+      var b = getAssetBal(asset);
+      if (amount > (Number(b.available) || 0) + 1e-12) { toast('Saldo de ' + asset + ' insuficiente (disponível: ' + Number(b.available || 0) + ').', 'error'); return; }
       if (btn) btn.disabled = true;
       try {
-        await api('/api/my/withdrawals', { method: 'POST', body: { amount: amount, gateway_id: gateway, gateway: gateway, wallet_to: wallet, wallet: wallet } });
+        await api('/api/my/withdrawals', { method: 'POST', body: { amount: amount, asset: asset, gateway_id: gateway, gateway: gateway, wallet_to: wallet, wallet: wallet } });
         toast('Saque solicitado!', 'success');
         wf.reset(); loadRecent(); loadMe();
+        paintWithdrawAssets();
       } catch (err) { toast('Erro: ' + err.message, 'error'); }
       finally { if (btn) btn.disabled = false; }
     });

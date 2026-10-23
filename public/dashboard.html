@@ -154,7 +154,14 @@
         <p class="fee-note">Seu código: <b id="refCode">—</b> · Comissão: <b>5% no 1º depósito</b></p>
       </div>
 
-      <div class="grid-2">
+      <div class="panel" style="margin-top:18px">
+        <h3>Saldos por moeda</h3>
+        <p class="desc">Seu saldo fica guardado na moeda que você depositou. Investimentos e saques usam essa moeda.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Moeda</th><th>Disponivel</th><th>Pendente</th><th>Estimado (USD)</th></tr></thead>
+          <tbody id="assetBalancesBody"><tr class="empty-row"><td colspan="4">Sem saldos</td></tr></tbody>
+        </table></div>
+      </div>
         <div class="panel">
           <h3>Últimos depósitos <span><a href="#deposits" style="color:var(--green,#10b981)">ver todos →</a></span></h3>
           <div class="table-wrap"><table>
@@ -202,11 +209,12 @@
           Sem saldo? Primeiro fa&#231;a um dep&#243;sito em <b>Adicionar Saldo</b> e aguarde a valida&#231;&#227;o no admin.
         </p>
         <form class="form" id="depositForm" style="max-width:none">
+          <div><label for="depAsset">Moeda para investir</label><select id="depAsset" required><option value="">Selecione a moeda...</option></select></div>
           <div><label for="depPlan">Plano</label><select id="depPlan" required><option value="">Carregando planos&hellip;</option></select></div>
           <div id="depPlanHint"></div>
-          <div><label for="depAmount">Valor (USD)</label><input id="depAmount" type="number" min="1" step="0.01" placeholder="100.00" required/></div>
-           <div><button class="btn btn-primary" type="submit" id="depSubmit">Investir no plano</button></div>
-        </form>
+          <div><label for="depAmount">Valor (na moeda)</label><input id="depAmount" type="number" min="0" step="0.00000001" placeholder="0.01" required/><span class="form-hint" id="depAssetAvail">Saldo disponivel: —</span><span class="form-hint" id="depUsdHint">Equivale a: US$ —</span></div>
+           <div><button class="btn btn-primary" type="submit" id="depSubmit">Investir no plano (staking)</button></div>
+         </form>
       </div>
     </section>
 
@@ -215,7 +223,7 @@
       <form class="form" id="topupForm" style="max-width:none">
       <div class="panel" style="margin-bottom:18px">
         <h3><span class="step-num">1</span> Escolha o ativo</h3>
-        <p class="desc">Primeiro selecione a moeda e a rede. O endereço da plataforma aparece em seguida.</p>
+        <p class="desc">Selecione a moeda e a rede. O endereço da plataforma aparece em seguida.</p>
         <div><label for="topGateway">Moeda / Rede</label><select id="topGateway" required><option value="">Carregando redes…</option></select></div>
         <div class="gateway-address" id="topGatewayInfo" hidden style="margin-top:12px"></div>
         <div style="margin-top:10px">
@@ -225,10 +233,10 @@
       </div>
       <div class="panel" style="margin-bottom:18px">
         <h3><span class="step-num">2</span> Quanto você quer depositar</h3>
-        <p class="desc">Digite o valor em USD. Na rede Solana ele é convertido em SOL pela cotação real na hora do pagamento.</p>
+        <p class="desc">Digite o valor na moeda escolhida. Para Solana, a cotação é usada apenas para exibição/validação do plano.</p>
         <div class="form" style="max-width:560px">
-          <div><label for="topAmount">Valor do depósito (USD)</label><input id="topAmount" type="number" min="1" step="0.01" placeholder="100.00" required/><span class="form-hint" id="topSolConvert"></span></div>
-          <div id="topHashWrap"><label for="topTxHash">Hash da transferência</label><input id="topTxHash" type="text" placeholder="0x… ou ID da transação"/><span class="form-hint" id="topHashHint">Para redes que não usam carteira conectada, cole aqui o hash da transferência para o admin validar.</span></div>
+          <div><label for="topAmount">Valor do depósito (na moeda)</label><input id="topAmount" type="number" min="0" step="0.00000001" placeholder="0.01" required/><span class="form-hint" id="topSolConvert"></span></div>
+          <div id="topHashWrap"><label for="topTxHash">Hash da transferência</label><input id="topTxHash" type="text" placeholder="0x… ou ID da transação"/><span class="form-hint" id="topHashHint">Cole o hash da transferência para o admin validar (obrigatório fora de pagamento on-chain Solana).</span></div>
         </div>
       </div>
       <div class="panel">
@@ -274,10 +282,13 @@
         <p class="desc" id="wdRuleNote">O saque é liberado somente depois que TODO o saldo depositado concluir um investimento em plano. Na tela "Investir em Plano" você usa o saldo; no fim do ciclo o principal volta liberado para saque.</p>
         <form class="form" id="withdrawForm">
           <div class="form-row">
-            <div><label for="wdAmount">Amount (USD)</label><input id="wdAmount" type="number" min="1" step="0.01" placeholder="50.00" required/></div>
-            <div><label for="wdGateway">Gateway</label><select id="wdGateway" required><option value="">Carregando gateways…</option></select></div>
+            <div><label for="wdAsset">Moeda</label><select id="wdAsset" required><option value="">Selecione...</option></select></div>
+            <div><label for="wdAmount">Quantidade (na moeda)</label><input id="wdAmount" type="number" min="0" step="0.00000001" placeholder="0.01" required/><span class="form-hint" id="wdAssetAvail">Disponivel: —</span></div>
           </div>
-          <div><label for="wdWallet">Wallet (destino)</label><input id="wdWallet" type="text" placeholder="Your wallet address" required/></div>
+          <div class="form-row">
+            <div><label for="wdGateway">Gateway / Rede</label><select id="wdGateway" required><option value="">Carregando gateways…</option></select></div>
+            <div><label for="wdWallet">Carteira (destino)</label><input id="wdWallet" type="text" placeholder="Endereço da carteira" required/></div>
+          </div>
           <div><button class="btn btn-primary" type="submit" id="wdSubmit">Solicitar saque</button></div>
         </form>
       </div>

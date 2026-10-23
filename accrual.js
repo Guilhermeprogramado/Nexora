@@ -38,6 +38,28 @@ function round2(v) {
   return Math.round((Number(v) + Number.EPSILON) * 100) / 100;
 }
 
+// Moedas têm precisões diferentes (BTC ~8 casas). Guardamos o saldo em
+// unidades da própria moeda com 8 casas para não perder poeira a cada dia.
+function roundAsset(v) {
+  return Math.round((Number(v) + Number.EPSILON) * 1e8) / 1e8;
+}
+
+function assetOf(pos) {
+  return String((pos && pos.asset) || 'USDT').toUpperCase();
+}
+
+/** Credita (ou debita, com amount negativo) o saldo de uma moeda. */
+async function creditAsset(db, userId, asset, amount) {
+  const amt = roundAsset(amount);
+  if (!amt) return;
+  await db.prepare(`INSERT INTO user_balances (user_id, asset, amount)
+    VALUES (?, ?, ?)
+    ON CONFLICT (user_id, asset) DO UPDATE SET
+      amount = user_balances.amount + EXCLUDED.amount,
+      updated_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
+    .run(userId, String(asset).toUpperCase(), amt);
+}
+
 /**
  * Momento do investimento em ms (epoch UTC). Usa `created_at` da posicao
  * (tem hora), caindo para started_on (meia-noite UTC) se ausente.
@@ -75,17 +97,19 @@ function elapsedDays(pos, onDate) {
  * Abre uma posicao para um deposito aprovado.
  * `db` pode ser o adapter principal ou uma transacao (passar `tdb`).
  */
-async function openPosition(db, { userId, depositId, planId, principal, rate, durationDays, planName }) {
+async function openPosition(db, { userId, depositId, planId, principal, rate, durationDays, planName, asset, principalAsset }) {
   const p = round2(principal);
+  const pAsset = roundAsset(principalAsset === undefined || principalAsset === null ? principal : principalAsset);
+  const symbol = String(asset || 'USDT').toUpperCase();
   if (!(p > 0)) throw new Error('Principal invalido');
   if (!(Number(rate) > 0)) throw new Error('Taxa invalida');
   const days = parseInt(durationDays, 10);
   if (!Number.isInteger(days) || days < 1) throw new Error('Duracao invalida');
 
   const ins = db.prepare(`INSERT INTO positions
-    (user_id, deposit_id, plan_id, plan_name, principal, daily_rate, duration_days, started_on)
-    VALUES (?, ?, ?, ?, ?, ?, ?, to_char(now(), 'YYYY-MM-DD'))`);
-  const info = await ins.run(userId, depositId ?? null, planId ?? null, String(planName), p, Number(rate), days);
+    (user_id, deposit_id, plan_id, plan_name, principal, asset, principal_asset, daily_rate, duration_days, started_on)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, to_char(now(), 'YYYY-MM-DD'))`);
+  const info = await ins.run(userId, depositId ?? null, planId ?? null, String(planName), p, symbol, pAsset, Number(rate), days);
   return db.prepare('SELECT * FROM positions WHERE id = ?').get(Number(info.lastInsertRowid));
 }
 
@@ -99,13 +123,20 @@ function projectPosition(pos, onDate) {
   const paid = Number(pos.days_paid) || 0;
   const elapsed = elapsedDays(pos, onDate);
   const earnedDays = Math.max(0, Math.min(days, Math.max(elapsed, paid)));
+  const principalAsset = Number(pos.principal_asset) || Number(pos.principal) || 0;
   const daily = round2(Number(pos.principal) * (rate / 100));
+  const dailyAsset = roundAsset(principalAsset * (rate / 100));
   return {
+    asset: assetOf(pos),
+    principal_asset: roundAsset(principalAsset),
     daily_amount: daily,
+    daily_asset: dailyAsset,
     earned_days: earnedDays,
     remaining_days: Math.max(0, days - earnedDays),
     projected_total: round2(Number(pos.principal) + daily * earnedDays),
-    projected_profit: round2(daily * earnedDays)
+    projected_profit: round2(daily * earnedDays),
+    projected_total_asset: roundAsset(principalAsset + dailyAsset * earnedDays),
+    projected_profit_asset: roundAsset(dailyAsset * earnedDays)
   };
 }
 
@@ -131,7 +162,10 @@ async function runAccruals(db, opts = {}) {
       const rate = Number(pos.daily_rate) || 0;
       const total = parseInt(pos.duration_days, 10) || 0;
       const paid = Number(pos.days_paid) || 0;
+      const asset = assetOf(pos);
+      const principalAsset = Number(pos.principal_asset) || Number(pos.principal);
       const daily = round2(Number(pos.principal) * (rate / 100));
+      const dailyAsset = roundAsset(principalAsset * (rate / 100));
 
       // Cada dia paga em janelas de 24h a partir do momento do investimento.
       let elapsed = elapsedDays(pos, onDate);
@@ -148,9 +182,9 @@ async function runAccruals(db, opts = {}) {
         const accrualDate = addDays(pos.started_on, dayNumber);
         const r = await tdb
           .prepare(`INSERT OR IGNORE INTO accruals
-            (position_id, accrual_date, day_number, principal, rate, amount)
-            VALUES (?, ?, ?, ?, ?, ?)`)
-          .run(pos.id, accrualDate, dayNumber, pos.principal, rate, daily);
+            (position_id, accrual_date, day_number, principal, rate, amount, asset, amount_asset)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(pos.id, accrualDate, dayNumber, pos.principal, rate, daily, asset, dailyAsset);
         if (r.changes === 0) continue; // ja creditado nesse dia
 
         creditedDays.push(dayNumber);
@@ -162,8 +196,8 @@ async function runAccruals(db, opts = {}) {
 
       for (const dayNumber of creditedDays) {
         const dateStr = addDays(pos.started_on, dayNumber);
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'accrual', ?, ?)`)
-          .run(pos.user_id, daily,
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'accrual', ?, ?, ?, ?)`)
+          .run(pos.user_id, daily, asset, dailyAsset,
             'Rendimento (SIMULADO) ' + pos.plan_name + ' dia ' + dayNumber + '/' + total + ' - ' + dateStr);
       }
 
@@ -173,14 +207,20 @@ async function runAccruals(db, opts = {}) {
         .get(pos.id);
       const newPaid = Number(paidRow.m);
       const sumRow = await tdb
-        .prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM accruals WHERE position_id = ?')
+        .prepare('SELECT COALESCE(SUM(amount), 0) AS s, COALESCE(SUM(amount_asset), 0) AS sa FROM accruals WHERE position_id = ?')
         .get(pos.id);
       const newAccrued = round2(Number(sumRow.s));
+      const newAccruedAsset = roundAsset(Number(sumRow.sa));
 
-      const delta = daily * Math.max(0, newPaid - paid);
+      const deltaDays = Math.max(0, newPaid - paid);
+      const delta = round2(daily * deltaDays);
+      const deltaAsset = roundAsset(dailyAsset * deltaDays);
       if (delta > 0) {
         await tdb.prepare("UPDATE users SET balance = balance + ?, total_earnings = total_earnings + ? WHERE id = ?")
           .run(delta, delta, pos.user_id);
+      }
+      if (deltaAsset !== 0) {
+        await creditAsset(tdb, pos.user_id, asset, deltaAsset);
       }
 
       if (newPaid !== paid || newAccrued !== Number(pos.accrued)) {
@@ -189,18 +229,20 @@ async function runAccruals(db, opts = {}) {
           // Ciclo completo: o principal volta do active_deposit para o saldo
           // como "liberado p/ saque" (invested_released). Só os lucros diários
           // já creditados e este retorno é que ficam disponíveis ao usuário.
+          // A moeda volta em unidades da própria moeda.
           await tdb.prepare(`UPDATE users SET
               active_deposit = CASE WHEN active_deposit - ? < 0 THEN 0 ELSE active_deposit - ? END,
               balance = balance + ?,
               invested_released = invested_released + ?
             WHERE id = ?`)
             .run(pos.principal, pos.principal, pos.principal, pos.principal, pos.user_id);
-          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'principal_return', ?, ?)`)
-            .run(pos.user_id, pos.principal, pos.plan_name + ' concluido - principal liberado para saque');
+          await creditAsset(tdb, pos.user_id, asset, principalAsset);
+          await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'principal_return', ?, ?, ?, ?)`)
+            .run(pos.user_id, pos.principal, asset, roundAsset(principalAsset), pos.plan_name + ' concluido - principal liberado para saque');
         }
-        await tdb.prepare(`UPDATE positions SET days_paid = ?, accrued = ?, status = ?, closed_at = ? WHERE id = ?`)
-          .run(newPaid, newAccrued, finished ? 'closed' : 'active', finished ? onDate : null, pos.id);
-        touched.push({ id: pos.id, user_id: pos.user_id, days_paid: newPaid, accrued: newAccrued, finished });
+        await tdb.prepare(`UPDATE positions SET days_paid = ?, accrued = ?, accrued_asset = ?, status = ?, closed_at = ? WHERE id = ?`)
+          .run(newPaid, newAccrued, newAccruedAsset, finished ? 'closed' : 'active', finished ? onDate : null, pos.id);
+        touched.push({ id: pos.id, user_id: pos.user_id, days_paid: newPaid, accrued: newAccrued, asset, accrued_asset: newAccruedAsset, finished });
       }
     }
 
@@ -208,4 +250,4 @@ async function runAccruals(db, opts = {}) {
   });
 }
 
-module.exports = { openPosition, runAccruals, projectPosition, round2, todayStr, daysBetween };
+module.exports = { openPosition, runAccruals, projectPosition, round2, roundAsset, creditAsset, assetOf, todayStr, daysBetween };

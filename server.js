@@ -107,10 +107,14 @@ function signToken(user) {
  * e pelo auto-aprovacao via carteira conectada.
  */
 async function creditDepositApproval(tdb, dep, reason) {
+  const usd = Number(dep.amount) || 0;
+  const asset = String(dep.asset || 'USDT').toUpperCase();
+  const units = Number(dep.amount_asset) || usd;
   await tdb.prepare('UPDATE users SET balance = balance + ?, total_deposited = total_deposited + ? WHERE id = ?')
-    .run(dep.amount, dep.amount, dep.user_id);
-  await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_approved', ?, ?)`)
-    .run(dep.user_id, dep.amount, reason);
+    .run(usd, usd, dep.user_id);
+  await accrual.creditAsset(tdb, dep.user_id, asset, units);
+  await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'deposit_approved', ?, ?, ?, ?)`)
+    .run(dep.user_id, usd, asset, units, reason);
 
   const referred = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(dep.user_id);
   if (referred && referred.referred_by) {
@@ -121,11 +125,13 @@ async function creditDepositApproval(tdb, dep, reason) {
     if (firstDeposit && Number(firstDeposit.cnt) === 1) {
       const referrer = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(referred.referred_by);
       if (referrer) {
-        const commission = Number(dep.amount) * 0.05;
+        const commissionUsd = accrual.round2(usd * 0.05);
+        const commissionUnits = accrual.roundAsset(units * 0.05);
         await tdb.prepare('UPDATE users SET balance = balance + ? WHERE id = ?')
-          .run(commission, referrer.id);
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'referral_commission', ?, ?)`)
-          .run(referrer.id, commission, `Comissão 5% do 1º depósito do usuário #${dep.user_id} (${referred.username})`);
+          .run(commissionUsd, referrer.id);
+        await accrual.creditAsset(tdb, referrer.id, asset, commissionUnits);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'referral_commission', ?, ?, ?, ?)`)
+          .run(referrer.id, commissionUsd, asset, commissionUnits, `Comissão 5% do 1º depósito do usuário #${dep.user_id} (${referred.username})`);
       }
     }
   }
@@ -232,6 +238,57 @@ function maskUsername(name) {
   if (!name || typeof name !== 'string') return 'Us***o';
   if (name.length <= 3) return name[0] + '***';
   return name.slice(0, 2) + '***' + name.slice(-1);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-moeda: cada usuario tem saldo por moeda em user_balances. `amount` e
+// em unidades da propria moeda (ex.: 0.5 SOL) e `pending` reserva saques.
+// O valor em USD serve so para as faixas dos planos e para os totais do admin.
+// ---------------------------------------------------------------------------
+const PLACEHOLDER_WALLET = 'SIMULADO-NENHUMA-CARTEIRA-REAL';
+let priceCache = { at: 0, map: {} };
+
+function gatewayAsset(gw) {
+  const s = String((gw && gw.symbol) || '').trim().toUpperCase();
+  return s || 'USDT';
+}
+
+function isPlaceholderWallet(addr) {
+  return String(addr || '').trim() === PLACEHOLDER_WALLET;
+}
+
+async function getUsdPrice(symbol) {
+  const sym = String(symbol || '').toUpperCase();
+  if (sym === 'USDT' || sym === 'USDC') return 1;
+  const now = Date.now();
+  if (!priceCache.map[sym] || now - priceCache.at > 60000) {
+    const map = Object.assign({}, priceCache.map);
+    try {
+      const gecko = await fetchCoinGeckoPrices();
+      if (Array.isArray(gecko)) {
+        for (const p of gecko) {
+          const s = String(p.symbol || '').toUpperCase();
+          if (s && Number(p.price) > 0) map[s] = Number(p.price);
+        }
+      }
+    } catch (e) {}
+    if (!(Number(map.SOL) > 0)) {
+      try {
+        const v = await solana.getSolPriceUsd();
+        if (Number(v) > 0) map.SOL = Number(v);
+      } catch (e) {}
+    }
+    priceCache = { at: now, map };
+  }
+  const p = Number(priceCache.map[sym]);
+  return Number.isFinite(p) && p > 0 ? p : NaN;
+}
+
+async function getAssetRow(dbc, userId, asset) {
+  const row = await dbc
+    .prepare('SELECT amount, pending FROM user_balances WHERE user_id = ? AND asset = ?')
+    .get(userId, String(asset || '').toUpperCase());
+  return { amount: Number(row && row.amount) || 0, pending: Number(row && row.pending) || 0 };
 }
 
 async function getSettingsObject() {
@@ -595,6 +652,30 @@ app.get('/api/me', authRequired, async (req, res) => {
       ? Math.max(0, (Number(out.balance) || 0) - (Number(out.pending_withdraw) || 0))
       : 0;
     out.released_principal = released;
+    // Saldo por moeda (fonte da verdade para o usuario). `usd_value` e apenas
+    // estimativa de mercado para exibicao — o saldo gastavel e em unidades da
+    // moeda, nunca convertido automaticamente.
+    try {
+      const balRows = await db
+        .prepare('SELECT asset, amount, pending FROM user_balances WHERE user_id = ? AND (amount <> 0 OR pending <> 0) ORDER BY asset ASC')
+        .all(req.user.id);
+      out.balances = [];
+      for (const b of balRows) {
+        const price = await getUsdPrice(b.asset);
+        const amount = Number(b.amount) || 0;
+        const pending = Number(b.pending) || 0;
+        out.balances.push({
+          asset: String(b.asset || '').toUpperCase(),
+          amount: accrual.roundAsset(amount),
+          pending: accrual.roundAsset(pending),
+          available: accrual.roundAsset(Math.max(0, amount - pending)),
+          usd_price: Number.isFinite(price) ? price : null,
+          usd_value: Number.isFinite(price) ? accrual.round2(amount * price) : null
+        });
+      }
+    } catch (e) {
+      out.balances = [];
+    }
     return res.json(out);
   } catch (err) {
     console.error(err);
@@ -708,10 +789,43 @@ app.get('/api/my/deposits', authRequired, async (req, res) => {
 
 app.post('/api/my/deposits', authRequired, async (req, res) => {
   try {
-    const { plan_id, amount, gateway_id, tx_hash } = req.body || {};
+    const body = req.body || {};
+    const { plan_id, amount, gateway_id, tx_hash } = body;
     const gwId = parseInt(gateway_id, 10);
-    const amt = toNum(amount);
-    // plan_id opcional: COM plano = depósito para investir; SEM plano = adição de saldo (top-up via Carteira)
+    const amtIn = toNum(amount);
+    const assetInput = body.asset ? String(body.asset).trim().toUpperCase() : '';
+    if (!Number.isInteger(gwId) || gwId <= 0) {
+      return res.status(400).json({ error: 'Gateway invalido.' });
+    }
+    if (!Number.isFinite(amtIn) || amtIn <= 0) {
+      return res.status(400).json({ error: 'Valor invalido.' });
+    }
+    const gw = await db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
+    if (!gw || !gw.active) {
+      return res.status(400).json({ error: 'Gateway indisponivel.' });
+    }
+    if (isPlaceholderWallet(gw.wallet_address)) {
+      return res.status(400).json({ error: 'A carteira de destino desta moeda ainda nao foi configurada pelo admin. Escolha outra moeda ou aguarde a configuracao.' });
+    }
+    const asset = gatewayAsset(gw);
+    if (assetInput && assetInput !== asset) {
+      return res.status(400).json({ error: `Moeda nao confere com o gateway (${asset}).` });
+    }
+    const price = await getUsdPrice(asset);
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(503).json({ error: 'Cotacao de ' + asset + ' indisponivel. Tente novamente.' });
+    }
+    // Contrato novo: `amount` vem em unidades da moeda (0.5 SOL) e o valor em
+    // USD e calculado aqui para validar a faixa do plano. Cliente antigo (sem
+    // `asset`) mandava USD; convertemos para nao quebrar.
+    const legacyUsd = !assetInput;
+    const units = accrual.roundAsset(legacyUsd ? amtIn / price : amtIn);
+    const usd = legacyUsd ? accrual.round2(amtIn) : accrual.round2(units * price);
+    if (!(units > 0) || !(usd > 0)) {
+      return res.status(400).json({ error: 'Valor invalido.' });
+    }
+
+    // plan_id opcional: COM plano = deposito para investir; SEM plano = adicao de saldo.
     let plan = null;
     let planId = null;
     if (plan_id !== undefined && plan_id !== null && String(plan_id).trim() !== '') {
@@ -723,28 +837,18 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
       if (!plan || !plan.active) {
         return res.status(400).json({ error: 'Plano indisponivel.' });
       }
-      if (amt < plan.min_deposit || amt > plan.max_deposit) {
+      if (usd < plan.min_deposit || usd > plan.max_deposit) {
         return res.status(400).json({
-          error: `Valor deve estar entre ${plan.min_deposit} e ${plan.max_deposit}.`
+          error: `Equivale a US$ ${usd.toFixed(2)}; o plano aceita entre US$ ${plan.min_deposit} e US$ ${plan.max_deposit}.`
         });
       }
     }
-    if (!Number.isInteger(gwId) || gwId <= 0) {
-      return res.status(400).json({ error: 'Gateway invalido.' });
-    }
-    if (!Number.isFinite(amt) || amt <= 0) {
-      return res.status(400).json({ error: 'Valor invalido.' });
-    }
-    const gw = await db.prepare('SELECT * FROM gateways WHERE id = ?').get(gwId);
-    if (!gw || !gw.active) {
-      return res.status(400).json({ error: 'Gateway indisponivel.' });
-    }
+
     const tx = tx_hash ? String(tx_hash).trim().slice(0, 200) : null;
     const walletAddr = String(req.user.wallet_address || '').trim();
     const gwNet = String(gw.network || '').toUpperCase();
-    const solanaGateway = gwNet.includes('SOL') || gwNet.includes('SPL');
+    const solanaGateway = gwNet.includes('SOL') || gwNet.includes('SPL') || asset === 'SOL';
     // Gateway Solana: exige pagamento real VERIFICADO on-chain ANTES de creditar.
-    // Se a transacao nao existir/confirmar, NADA entra no saldo.
     let verifiedSolana = null;
     let payNet = solana.DEFAULT_PAY_NETWORK;
     if (solanaGateway) {
@@ -765,11 +869,7 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
       } catch (e) {
         return res.status(400).json({ error: 'Carteira de destino invalida. Ajuste em Admin > Gateways.' });
       }
-      const price = await solana.getSolPriceUsd();
-      if (!Number.isFinite(price) || price <= 0) {
-        return res.status(503).json({ error: 'Cotacao do SOL indisponivel. Tente novamente.' });
-      }
-      const expected = Math.floor((amt / price) * solana.LAMPORTS_PER_SOL);
+      const expected = Math.floor(units * solana.LAMPORTS_PER_SOL);
       const minLamports = Math.floor(expected * 0.95);
       const check = await solana.verifySolTransfer({ signature: tx, from: walletAddr, to: dest, minLamports, network: payNet });
       if (!check.ok) {
@@ -777,11 +877,11 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
       }
       verifiedSolana = check;
     }
-    // Carteira conectada (fluxo antigo, nao-Solana) = deposito aprovado
-    // automaticamente. Sem carteira = hash + validacao no admin.
-    const auto = verifiedSolana ? true : (!solanaGateway && !!walletAddr);
-    // Um deposito pendente por vez: evita a criacao acidental de linhas
-    // duplicadas enquanto o admin nao aprova o primeiro.
+    // Fora da Solana nao ha verificacao on-chain: fica PENDENTE para o admin
+    // validar o hash. (A auto-aprovacao por carteira conectada foi removida
+    // porque creditava saldo sem pagamento real confirmado.)
+    const auto = !!verifiedSolana;
+    // Um deposito pendente por vez: evita linhas duplicadas.
     if (!auto) {
       const pend = await db
         .prepare("SELECT id FROM deposits WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1")
@@ -791,28 +891,26 @@ app.post('/api/my/deposits', authRequired, async (req, res) => {
           error: `Voce ja tem um deposito (#${pend.id}) aguardando aprovacao. Aguarde a validacao no admin.`
         });
       }
-    }
-    if (!plan && !auto && !tx) {
-      return res.status(400).json({ error: 'Informe o hash da transferência para validação do saldo.' });
+      if (!tx) {
+        return res.status(400).json({ error: 'Informe o hash da transferencia para validacao do saldo.' });
+      }
     }
 
     const doDeposit = db.transaction(async (tdb) => {
       const info = await tdb
-        .prepare(`INSERT INTO deposits (user_id, plan_id, amount, gateway_id, status, tx_hash)
-                  VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(req.user.id, planId, amt, gwId, auto ? 'active' : 'pending', auto ? (tx || ('carteira:' + req.user.wallet_address)) : tx);
+        .prepare(`INSERT INTO deposits (user_id, plan_id, amount, asset, amount_asset, gateway_id, status, tx_hash)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(req.user.id, planId, usd, asset, units, gwId, auto ? 'active' : 'pending', auto ? (tx || ('carteira:' + req.user.wallet_address)) : tx);
       const dep = await tdb.prepare('SELECT * FROM deposits WHERE id = ?').get(info.lastInsertRowid);
       if (auto) {
-        const detail = verifiedSolana
-          ? `Deposito #${dep.id} confirmado on-chain (Solana ${solana.payNetwork(payNet)}, ${verifiedSolana.lamports} lamports) — saldo liberado`
-          : `Deposito #${dep.id} aprovado automaticamente (carteira ` + req.user.wallet_chain + `) — saldo liberado`;
+        const detail = `Deposito #${dep.id} confirmado on-chain (Solana ${solana.payNetwork(payNet)}, ${verifiedSolana.lamports} lamports) — ${units} ${asset} liberados`;
         await creditDepositApproval(tdb, dep, detail);
       } else {
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
-                    VALUES (?, 'deposit_pending', ?, ?)`)
-          .run(req.user.id, amt, plan
-            ? `Deposito #${info.lastInsertRowid} pendente (${plan.name}/${gw.symbol})`
-            : `Adicao de saldo #${info.lastInsertRowid} pendente (${gw.symbol}) — hash ${tx}`);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail)
+                    VALUES (?, 'deposit_pending', ?, ?, ?, ?)`)
+          .run(req.user.id, usd, asset, units, plan
+            ? `Deposito #${info.lastInsertRowid} pendente (${plan.name}/${asset})`
+            : `Adicao de saldo #${info.lastInsertRowid} pendente (${asset}) — hash ${tx}`);
       }
       return dep;
     });
@@ -832,39 +930,57 @@ app.post('/api/my/invest', authRequired, async (req, res) => {
   try {
     const body = req.body || {};
     const planId = parseInt(body.plan_id, 10);
-    const amt = toNum(body.amount);
+    const asset = String(body.asset || '').trim().toUpperCase();
+    const units = toNum(body.amount);
     if (!Number.isInteger(planId) || planId <= 0) {
       return res.status(400).json({ error: 'Plano invalido.' });
     }
-    if (!Number.isFinite(amt) || amt <= 0) {
+    if (!asset) {
+      return res.status(400).json({ error: 'Escolha a moeda do investimento.' });
+    }
+    if (!Number.isFinite(units) || units <= 0) {
       return res.status(400).json({ error: 'Valor invalido.' });
     }
     const plan = await db.prepare('SELECT * FROM plans WHERE id = ?').get(planId);
     if (!plan || !plan.active) {
       return res.status(400).json({ error: 'Plano indisponivel.' });
     }
-    if (amt < plan.min_deposit || amt > plan.max_deposit) {
+    const price = await getUsdPrice(asset);
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(503).json({ error: 'Cotacao de ' + asset + ' indisponivel. Tente novamente.' });
+    }
+    const usd = accrual.round2(units * price);
+    if (usd < plan.min_deposit || usd > plan.max_deposit) {
       return res.status(400).json({
-        error: `Valor deve estar entre ${plan.min_deposit} e ${plan.max_deposit}.`
+        error: `Equivale a US$ ${usd.toFixed(2)}; o plano aceita entre US$ ${plan.min_deposit} e US$ ${plan.max_deposit}.`
+      });
+    }
+    const bal = await getAssetRow(db, req.user.id, asset);
+    const avail = bal.amount - bal.pending;
+    if (avail + 1e-9 < units) {
+      return res.status(400).json({
+        error: `Saldo de ${asset} insuficiente (disponivel ${accrual.roundAsset(Math.max(0, avail))} ${asset}). Adicione saldo nessa moeda para investir.`
       });
     }
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     if (!user) return res.status(404).json({ error: 'Usuario nao encontrado.' });
-    if (toNum(user.balance) < amt) {
-      return res.status(400).json({ error: 'Saldo insuficiente. Adicione saldo para investir.' });
-    }
 
     let position = null;
     const apply = db.transaction(async (tdb) => {
-      await tdb.prepare('UPDATE users SET balance = balance - ?, active_deposit = active_deposit + ? WHERE id = ?')
-        .run(amt, amt, req.user.id);
-      await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'invest', ?, ?)`)
-        .run(req.user.id, amt, `Investimento no plano ${plan.name}`);
+      await accrual.creditAsset(tdb, req.user.id, asset, -units);
+      await tdb.prepare(`UPDATE users SET
+          balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END,
+          active_deposit = active_deposit + ? WHERE id = ?`)
+        .run(usd, usd, usd, req.user.id);
+      await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'invest', ?, ?, ?, ?)`)
+        .run(req.user.id, usd, asset, units, `Staking no plano ${plan.name} (${units} ${asset})`);
       position = await accrual.openPosition(tdb, {
         userId: req.user.id,
         depositId: null,
         planId: plan.id,
-        principal: amt,
+        principal: usd,
+        asset,
+        principalAsset: units,
         rate: plan.daily_rate,
         durationDays: plan.duration_days,
         planName: plan.name
@@ -894,15 +1010,13 @@ app.get('/api/my/withdrawals', authRequired, async (req, res) => {
 
 app.post('/api/my/withdrawals', authRequired, async (req, res) => {
   try {
-    const { amount, gateway_id, wallet_to } = req.body || {};
-    const amt = toNum(amount);
-    const gwId = parseInt(gateway_id, 10);
-    const wallet = wallet_to ? String(wallet_to).trim() : '';
-    if (!Number.isFinite(amt) || amt <= 0) {
+    const body = req.body || {};
+    const amtIn = toNum(body.amount);
+    const assetInput = body.asset ? String(body.asset).trim().toUpperCase() : '';
+    const gwId = parseInt(body.gateway_id, 10);
+    const wallet = body.wallet_to ? String(body.wallet_to).trim() : '';
+    if (!Number.isFinite(amtIn) || amtIn <= 0) {
       return res.status(400).json({ error: 'Valor invalido.' });
-    }
-    if (amt < 10) {
-      return res.status(400).json({ error: 'Saque minimo de 10.' });
     }
     if (!Number.isInteger(gwId) || gwId <= 0) {
       return res.status(400).json({ error: 'Gateway invalido.' });
@@ -914,20 +1028,37 @@ app.post('/api/my/withdrawals', authRequired, async (req, res) => {
     if (!gw || !gw.active) {
       return res.status(400).json({ error: 'Gateway indisponivel.' });
     }
+    const asset = gatewayAsset(gw);
+    if (assetInput && assetInput !== asset) {
+      return res.status(400).json({ error: `Moeda nao confere com o gateway (${asset}).` });
+    }
+    const price = await getUsdPrice(asset);
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(503).json({ error: 'Cotacao de ' + asset + ' indisponivel. Tente novamente.' });
+    }
+    const legacyUsd = !assetInput;
+    const units = accrual.roundAsset(legacyUsd ? amtIn / price : amtIn);
+    const usd = legacyUsd ? accrual.round2(amtIn) : accrual.round2(units * price);
+    if (!(units > 0)) {
+      return res.status(400).json({ error: 'Valor invalido.' });
+    }
+    if (usd < 10) {
+      return res.status(400).json({ error: 'Saque minimo de US$ 10,00 equivalentes.' });
+    }
     // Catch-up antes de checar a regra de liberacao: se um plano acabou de
-    // vencer, o principal precisa estar em invested_released/balance para o
-    // saque nao ser bloqueado por estado desatualizado.
+    // vencer, o principal precisa estar de volta no saldo da moeda.
     await catchUpAccruals();
     const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-    const available = (fresh.balance || 0) - (fresh.pending_withdraw || 0);
-    if (amt > available) {
-      return res.status(400).json({ error: 'Saldo insuficiente.' });
+    const bal = await getAssetRow(db, req.user.id, asset);
+    const availAsset = bal.amount - bal.pending;
+    if (units > availAsset + 1e-9) {
+      return res.status(400).json({
+        error: `Saldo de ${asset} insuficiente (disponivel ${accrual.roundAsset(Math.max(0, availAsset))} ${asset}).`
+      });
     }
     // Regra do produto: o saque so fica liberado depois que TODO o saldo
     // depositado ja passou por um plano (ciclo completo -> invested_released)
     // e o usuario tem ao menos uma posicao (origem de rendimento).
-    // Dinheiro ja sacado (total_withdrawn) saiu do sistema e nao precisa
-    // voltar a ciclar.
     const hasAnyPos = await db
       .prepare('SELECT 1 AS ok FROM positions WHERE user_id = ? LIMIT 1')
       .get(req.user.id);
@@ -943,20 +1074,23 @@ app.post('/api/my/withdrawals', authRequired, async (req, res) => {
           (faltam > 0 ? ` Falta investir/concluir: USD ${accrual.round2(faltam)}.` : '')
       });
     }
-    const withdrawable = Math.max(0, fresh.balance - (fresh.pending_withdraw || 0));
-    if (amt > withdrawable) {
-      return res.status(400).json({ error: 'Saldo liberado insuficiente para saque.' });
-    }
     const doTx = db.transaction(async (tdb) => {
       const info = await tdb
-        .prepare(`INSERT INTO withdrawals (user_id, amount, gateway_id, wallet_to, status)
-                  VALUES (?, ?, ?, ?, 'pending')`)
-        .run(req.user.id, amt, gwId, wallet);
+        .prepare(`INSERT INTO withdrawals (user_id, amount, asset, amount_asset, gateway_id, wallet_to, status)
+                  VALUES (?, ?, ?, ?, ?, ?, 'pending')`)
+        .run(req.user.id, usd, asset, units, gwId, wallet);
+      // Reserva as unidades sem tirar do saldo: o usuario ve o valor, mas nao
+      // pode sacar/investir duas vezes enquanto o admin decide.
+      await tdb.prepare(`UPDATE user_balances SET
+          pending = pending + ?,
+          updated_at = to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+        WHERE user_id = ? AND asset = ?`)
+        .run(units, req.user.id, asset);
       await tdb.prepare('UPDATE users SET pending_withdraw = pending_withdraw + ? WHERE id = ?')
-        .run(amt, req.user.id);
-      await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail)
-                  VALUES (?, 'withdraw_pending', ?, ?)`)
-        .run(req.user.id, amt, `Saque #${info.lastInsertRowid} solicitado (${gw.symbol})`);
+        .run(usd, req.user.id);
+      await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail)
+                  VALUES (?, 'withdraw_pending', ?, ?, ?, ?)`)
+        .run(req.user.id, usd, asset, units, `Saque #${info.lastInsertRowid} solicitado (${units} ${asset})`);
       return info.lastInsertRowid;
     });
     const id = await doTx;
@@ -1144,6 +1278,12 @@ const apply = db.transaction(async (tdb) => {
             await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'accrual_reversal', ?, ?)`)
               .run(dep.user_id, -paid, 'Rendimento estornado — deposito #' + id + ' revertido');
           }
+          const posAsset = String(pos.asset || 'USDT').toUpperCase();
+          const paidAsset = (await tdb.prepare('SELECT COALESCE(SUM(amount_asset), 0) AS sa FROM accruals WHERE position_id = ?').get(pos.id)).sa;
+          if (Number(paidAsset) > 0) {
+            await tdb.prepare('UPDATE user_balances SET amount = CASE WHEN amount - ? < 0 THEN 0 ELSE amount - ? END, updated_at = to_char(now(), \'YYYY-MM-DD HH24:MI:SS\') WHERE user_id = ? AND asset = ?')
+              .run(paidAsset, paidAsset, dep.user_id, posAsset);
+          }
           await tdb.prepare("UPDATE positions SET status = 'closed', closed_at = to_char(now(), 'YYYY-MM-DD') WHERE id = ?").run(pos.id);
         }
         if (legacy) {
@@ -1151,19 +1291,27 @@ const apply = db.transaction(async (tdb) => {
           await tdb.prepare(`UPDATE users SET active_deposit = CASE WHEN active_deposit - ? < 0 THEN 0 ELSE active_deposit - ? END WHERE id = ?`)
             .run(dep.amount, dep.amount, dep.user_id);
         } else {
-          // Modelo atual: depósito aprovado creditou SALDO.
+          // Modelo atual: depósito aprovado creditou SALDO e saldo por moeda.
           await tdb.prepare('UPDATE users SET balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END WHERE id = ?')
             .run(dep.amount, dep.amount, dep.user_id);
+        }
+        // Remove as unidades creditadas no momento da aprovacao (funciona para
+        // depósitos diretos ao saldo e para investimentos futuros).
+        const asset = String(dep.asset || 'USDT').toUpperCase();
+        const units = Number(dep.amount_asset) || Number(dep.amount) || 0;
+        if (units > 0) {
+          await tdb.prepare('UPDATE user_balances SET amount = CASE WHEN amount - ? < 0 THEN 0 ELSE amount - ? END, updated_at = to_char(now(), \'YYYY-MM-DD HH24:MI:SS\') WHERE user_id = ? AND asset = ?')
+            .run(units, units, dep.user_id, asset);
         }
         // Como o deposito deixa de contar como aprovado, o 100% liberado
         // ("todo depositado passou por investimento") volta a exigir este valor.
         await tdb.prepare('UPDATE users SET total_deposited = CASE WHEN total_deposited - ? < 0 THEN 0 ELSE total_deposited - ? END WHERE id = ?')
           .run(dep.amount, dep.amount, dep.user_id);
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_reversed', ?, ?)`)
-          .run(dep.user_id, dep.amount, `Deposito #${id} movido de active para ${status}`);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'deposit_reversed', ?, ?, ?, ?)`)
+          .run(dep.user_id, dep.amount, asset, units, `Deposito #${id} movido de active para ${status}`);
       } else if (status === 'rejected') {
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'deposit_rejected', ?, ?)`)
-          .run(dep.user_id, dep.amount, `Deposito #${id} rejeitado`);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'deposit_rejected', ?, ?, ?, ?)`)
+          .run(dep.user_id, dep.amount, String(dep.asset || 'USDT').toUpperCase(), Number(dep.amount_asset) || Number(dep.amount) || 0, `Deposito #${id} rejeitado`);
       }
     });
     await apply;
@@ -1210,20 +1358,32 @@ app.put('/api/admin/withdrawals/:id', authRequired, adminRequired, async (req, r
       const user = await tdb.prepare('SELECT * FROM users WHERE id = ?').get(wd.user_id);
       if (!user) throw new Error('user-missing');
       if (status === 'approved') {
-        if ((user.pending_withdraw || 0) < wd.amount) throw new Error('pending-insuficiente');
-        if ((user.balance || 0) < wd.amount) throw new Error('saldo-insuficiente');
+        const usd = Number(wd.amount) || 0;
+        const asset = String(wd.asset || 'USDT').toUpperCase();
+        const units = Number(wd.amount_asset) || usd;
+        const balRow = await tdb.prepare('SELECT amount, pending FROM user_balances WHERE user_id = ? AND asset = ?').get(wd.user_id, asset);
+        const havePending = Number(balRow && balRow.pending) || 0;
+        if (havePending + 1e-9 < units) throw new Error('pending-insuficiente');
+        await tdb.prepare('UPDATE user_balances SET amount = CASE WHEN amount - ? < 0 THEN 0 ELSE amount - ? END, pending = CASE WHEN pending - ? < 0 THEN 0 ELSE pending - ? END, updated_at = to_char(now(), \'YYYY-MM-DD HH24:MI:SS\') WHERE user_id = ? AND asset = ?')
+          .run(units, units, units, units, wd.user_id, asset);
         await tdb.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
-        await tdb.prepare(`UPDATE users SET pending_withdraw = pending_withdraw - ?,
-                    balance = balance - ?, total_withdrawn = total_withdrawn + ? WHERE id = ?`)
-          .run(wd.amount, wd.amount, wd.amount, wd.user_id);
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'withdraw_approved', ?, ?)`)
-          .run(wd.user_id, wd.amount, `Saque #${id} aprovado`);
+        await tdb.prepare(`UPDATE users SET pending_withdraw = CASE WHEN pending_withdraw - ? < 0 THEN 0 ELSE pending_withdraw - ? END,
+                    balance = CASE WHEN balance - ? < 0 THEN 0 ELSE balance - ? END,
+                    total_withdrawn = total_withdrawn + ? WHERE id = ?`)
+          .run(usd, usd, usd, usd, wd.user_id);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'withdraw_approved', ?, ?, ?, ?)`)
+          .run(wd.user_id, usd, asset, units, `Saque #${id} aprovado (${units} ${asset})`);
       } else if (status === 'rejected') {
+        const usd = Number(wd.amount) || 0;
+        const asset = String(wd.asset || 'USDT').toUpperCase();
+        const units = Number(wd.amount_asset) || usd;
         await tdb.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
+        await tdb.prepare(`UPDATE user_balances SET pending = CASE WHEN pending - ? < 0 THEN 0 ELSE pending - ? END, updated_at = to_char(now(), \'YYYY-MM-DD HH24:MI:SS\') WHERE user_id = ? AND asset = ?`)
+          .run(units, units, wd.user_id, asset);
         await tdb.prepare(`UPDATE users SET pending_withdraw = CASE WHEN pending_withdraw - ? < 0 THEN 0 ELSE pending_withdraw - ? END WHERE id = ?`)
-          .run(wd.amount, wd.amount, wd.user_id);
-        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, detail) VALUES (?, 'withdraw_rejected', ?, ?)`)
-          .run(wd.user_id, wd.amount, `Saque #${id} rejeitado (valor liberado)`);
+          .run(usd, usd, wd.user_id);
+        await tdb.prepare(`INSERT INTO transactions (user_id, type, amount, asset, amount_asset, detail) VALUES (?, 'withdraw_rejected', ?, ?, ?, ?)`)
+          .run(wd.user_id, usd, asset, units, `Saque #${id} rejeitado (${units} ${asset} liberados)`);
       } else {
         await tdb.prepare('UPDATE withdrawals SET status = ? WHERE id = ?').run(status, id);
       }
